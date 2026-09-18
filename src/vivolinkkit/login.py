@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime
@@ -46,20 +47,22 @@ ACCOUNT_HOSTS = {
     "ru": "ru-passport.vivo.com",
     "eu": "passport.vivo.com",
 }
-# gateway that answers /account/getTokenByVivoTokenAndOpenid (region-selected):
+# gateway that answers the account API (region-selected). This is the `psuite`
+# family (client's gatewayProdHost) — the same host as the getHtml redirect page,
+# NOT pcsuite-api. The account API sits under a /vbusiness prefix.
 GATEWAYS = {
-    "cn": "https://pcsuite-api.vivo.com",
-    "asia": "https://asia-pcsuite-api.vivoglobal.com",
-    "in": "https://in-pcsuite-api.vivoglobal.com",
-    "ru": "https://ru-pcsuite-api.vivoglobal.com",
-    "eu": "https://eu-pcsuite-api.vivoglobal.com",
+    "cn": "https://psuite.vivo.com.cn",
+    "asia": "https://asia-psuite.vivo.com",
+    "in": "https://in-psuite.vivo.com",
+    "ru": "https://ru-psuite.vivo.com",
+    "eu": "https://eu-psuite.vivo.com",
 }
 
 # The redirect page whose hidden <input> carries the credentials (§8 step 2).
 REDIRECT_MARKER = "vbusiness/account/cookie/getHtml?openid="
 
-# Token-exchange endpoint (§8 step 3).
-TOKEN_PATH = "/account/getTokenByVivoTokenAndOpenid"
+# Token-exchange endpoint (§8 step 3) — under the /vbusiness prefix.
+TOKEN_PATH = "/vbusiness/account/getTokenByVivoTokenAndOpenid"
 
 
 def build_login_url(account_host: str, client_id: str, redirect_uri: str,
@@ -174,30 +177,53 @@ def capture_login(login_url: str, timeout_s: float = 300.0) -> dict:
     return captured
 
 
+def find_openid(creds: dict) -> str:
+    if creds.get("openid"):
+        return creds["openid"]
+    for name, val in (creds.get("_cookies") or {}).items():
+        if name.lower().endswith("_openid") and val:
+            return val
+    return ""
+
+
 def find_vivo_token(creds: dict) -> str:
-    """Locate the vivoToken among URL fields, hidden inputs, or cookies."""
-    for k in ("vivoToken", "vivotoken", "vivo_token", "token"):
+    """Locate the vivoToken — prefer the exact `*_vivotoken` cookie."""
+    for k in ("vivoToken", "vivotoken", "vivo_token"):
         if creds.get(k):
             return creds[k]
-    for name, val in (creds.get("_cookies") or {}).items():
+    cookies = creds.get("_cookies") or {}
+    for name, val in cookies.items():          # e.g. vivo_account_cookie_iqoo_vivotoken
+        if name.lower().endswith("vivotoken") and val:
+            return val
+    for name, val in cookies.items():
         if "token" in name.lower() and val:
             return val
     return ""
 
 
 def exchange_token(gateway: str, creds: dict, timeout_s: float = 15.0) -> dict:
-    """POST /account/getTokenByVivoTokenAndOpenid → { token, ... }."""
+    """POST the token endpoint. The client relies on the vivo_account_cookie_*
+    cookies being sent, so we forward them; openid/vivoToken also go in the body."""
     body = json.dumps({
-        "openid": creds.get("openid", ""),
+        "openid": find_openid(creds),
         "vivoToken": find_vivo_token(creds),
     }).encode()
+    headers = {"Content-Type": "application/json", "User-Agent": "vivo-linkkit/0"}
+    cookies = creds.get("_cookies") or {}
+    if cookies:
+        headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
     req = urllib.request.Request(
-        gateway + TOKEN_PATH, data=body, method="POST",
-        headers={"Content-Type": "application/json",
-                 "User-Agent": "vivo-linkkit/0"},
-    )
-    with urllib.request.urlopen(req, timeout=timeout_s) as r:
-        return json.loads(r.read().decode("utf-8", "replace"))
+        gateway + TOKEN_PATH, data=body, method="POST", headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as r:
+            raw = r.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        return {"_http_status": e.code,
+                "_body": e.read().decode("utf-8", "replace")[:2000]}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {"_body": raw[:2000]}
 
 
 def main() -> None:
@@ -235,18 +261,17 @@ def main() -> None:
         raise SystemExit("[login] captured redirect but no openid — inspect the "
                          f"raw dump in {AUTH_DIR} and adjust the flow.")
 
-    print("[login] exchanging for newToken…")
-    try:
-        resp = exchange_token(gateway, creds)
-    except Exception as e:  # noqa: BLE001
-        raise SystemExit(f"[login] token exchange failed: {type(e).__name__}: {e}\n"
-                         f"        (check --gateway/--region; raw creds saved.)")
+    print(f"[login] exchanging for newToken at {gateway}{TOKEN_PATH} …")
+    resp = exchange_token(gateway, creds)
     (AUTH_DIR / "token.json").write_text(json.dumps(resp, indent=2))
     token = resp.get("token") or (resp.get("data") or {}).get("token")
-    print(f"[login] token response saved. newToken present: {bool(token)}")
     if token:
-        print("[login] success — newToken obtained. Use it as the 'newToken' "
-              "header on gateway calls (PROTOCOL.md §8).")
+        print("[login] SUCCESS — newToken obtained. Saved to captures/auth/token.json. "
+              "Use it as the 'newToken' header on gateway calls (PROTOCOL.md §8).")
+    else:
+        status = resp.get("_http_status", "200/other")
+        body = (resp.get("_body") or json.dumps(resp))[:400]
+        print(f"[login] no token yet — HTTP {status}. Response snippet:\n  {body}")
 
 
 if __name__ == "__main__":
