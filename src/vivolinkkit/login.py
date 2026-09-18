@@ -241,7 +241,11 @@ def main() -> None:
     args = ap.parse_args()
 
     account_host = args.account_host or ACCOUNT_HOSTS[args.region]
-    gateway = args.gateway or GATEWAYS[args.region]
+    # The token exchange must hit the SAME host as the redirect page, because the
+    # vivo_account_cookie_* session cookies are scoped to that host. Default the
+    # gateway to the redirect_uri's host (override with --gateway).
+    redirect_host = urllib.parse.urlparse(args.redirect_uri).netloc
+    gateway = args.gateway or f"https://{redirect_host}"
     login_url = args.login_url or build_login_url(
         account_host, args.client_id, args.redirect_uri, args.lang)
 
