@@ -16,14 +16,26 @@ reimplementing it, scrcpy-style. No vendor binaries.
 
 ## Status
 
-🟢 **Phase 1 — protocol mapping, most of the way there.** The pivotal question is
-**answered**: pairing requires the user's **vivo account login** plus a local
-**QR + verify-code + handshake**, so the tool is **distributable** by driving the
-user's *own* login (no embedded secrets). The official Windows client is
-**Electron**, so the protocol was read from plaintext JS on Linux — **no VM, no
-Frida**. Transport is `wss://<phone>:<port>` carrying JSON; session cipher is
-`aes-256-cbc`; mirroring is H.264/265 via FFmpeg. Full detail (and the remaining
-unknowns — key/iv derivation, byte-level framing) in
+🟢 **Phase 1 complete — protocol mapped.** The pivotal question is **answered**
+(triple-confirmed by the phone APK, the PC client JS, and the phone's own UI):
+pairing is **vivo-account based** — the PC and phone sign into the *same* account
+and the cloud links them into "Connection center"; a per-session connect then runs
+over the LAN (**QR / verify-code / handshake**). So the tool is **distributable**
+by driving the user's *own* login — no embedded secrets, no bypass.
+
+The official Windows client is **Electron**, so the protocol was read from
+plaintext JS on Linux — **no VM, no Frida**. What's understood end-to-end:
+
+- **Transport:** `wss://<host>:<port>` (TLS) carrying JSON (`MESSAGE_EVENT_TYPE` /
+  `CONNECT_ROUTER`).
+- **Session crypto:** **AES-256-CBC** — the PC generates the key+iv and sends them
+  to the phone (nothing to derive).
+- **Mirroring:** H.264/H.265 via bundled FFmpeg.
+- **Discovery:** QR (cloud-mediated) + USB + Wi-Fi-Direct/LAN.
+
+**Next (Phase 2):** drive the vivo account login to obtain the session token, then
+a minimal Python client (discover → connect → first frame). Remaining unknowns are
+byte-level (exact verify-code check, wire framing). Full detail in
 [`protocol/PROTOCOL.md`](protocol/PROTOCOL.md). No client code yet.
 
 ## Quick start
