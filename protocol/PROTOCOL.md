@@ -78,9 +78,20 @@ analytics uploads, and is **unrelated to device pairing**. Do not treat it as th
 pairing key. The pairing crypto remains unseen (native daemon; `com.vivo.security`
 "JVQ" SDK is not called from the connect/cowork code at all).
 
+**Triple-confirmed by the phone's own UI.** The phone's "add my computer" screen
+(vivo Office Kit → Connection center) states verbatim: *"Install vivo Office Kit
+on your computer and **sign in to the same vivo account as that on your phone** to
+automatically add the computer to Connection center."* Download URL shown:
+**`pc.vivoglobal.com`**; the PC login offers **SMS verification code** or
+**password** (or register). So device linking is **same-account association via
+the cloud** — no local PIN/QR in the *add* step. Two phases:
+1. **Register the PC** — sign into the same account → cloud links it (this screen).
+2. **Connect a session** — QR/local + `wss` + AES-256-CBC (§1/§5).
+
 **Verdict / implications for the project — ANSWERED ✅**
-**User-account login is REQUIRED (Bucket 2), confirmed by BOTH endpoints**, with
-a **local-trust QR + verify-code handshake layered on top**:
+**User-account login is REQUIRED (Bucket 2), confirmed by THREE sources** (phone
+APK openid-keyed cache, PC JS "not login → empty list", phone UI above), with a
+**QR + verify-code + handshake** for the per-session connect on top:
 - Phone side: device cache keyed by account `openid` (§ above).
 - PC side (Electron JS, verified): if not logged in, the device list is force-
   emptied — `[...setPreConnectDevicesList] because not login, set empty list`;
