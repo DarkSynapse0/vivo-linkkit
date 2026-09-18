@@ -1,0 +1,42 @@
+# ── Clean-room / legal: NEVER commit vendor artifacts ──────────────────
+# Vivo binaries, APKs, DLLs, extracted keys/certs, and raw captures live
+# here and MUST stay out of version control.
+captures/*
+!captures/.gitkeep
+
+# Decompiled sources (informs the spec, never committed)
+decompiled/
+*.apk
+*.dex
+*.dll
+*.exe
+*.asar
+*.jar
+*.pcap
+*.pcapng
+
+# Extracted secrets — belt and suspenders
+*.pem
+*.key
+*.p12
+*.crt
+*.cer
+*.keystore
+
+# ── Python ─────────────────────────────────────────────────────────────
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+
+# ── Editor / OS ────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+.DS_Store

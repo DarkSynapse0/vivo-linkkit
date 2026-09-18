@@ -1,0 +1,63 @@
+# vivo-linkkit
+
+An independent, **clean-room interoperability** client for vivo Office Kit on Linux.
+
+> We do **not** port or modify vivo's software. We observe how the phone and the
+> official desktop client talk to each other, document that protocol, and
+> reimplement a client that speaks it — the same approach that produced
+> [scrcpy](https://github.com/Genymobile/scrcpy) and
+> [libimobiledevice](https://libimobiledevice.org/).
+
+## Status
+
+🚧 **Phase 0 / 1 — Recon & protocol mapping.** Nothing works yet. The immediate
+goal is to answer one question: **how is pairing authenticated?** See
+[`protocol/PROTOCOL.md`](protocol/PROTOCOL.md).
+
+## Quick start
+
+```sh
+scripts/bootstrap.sh          # install host deps, create the venv
+recon/01_inventory.sh         # device identity + candidate packages + open ports
+recon/02_decompile.sh <pkg>   # pull & decompile the phone agent, grep for signals
+recon/03_capture.sh           # usbmon / network / port-sweep captures
+```
+
+Then start filling in `protocol/PROTOCOL.md`.
+
+## Roadmap
+
+| Phase | Goal | Est. |
+|------|------|------|
+| **P0** Recon & setup | Real data on the wire, not guesses | days |
+| **P1** Protocol map | Answer the pairing question; fill `PROTOCOL.md` | 1–2 wks |
+| **P2** Exploration client | Pair + write one decodable H.264 frame to disk | 2–4 wks |
+| **P3** Real client | Smooth mirroring + input control (Rust/Go) | 1–2 mo |
+| **P4** Services | File transfer, clipboard, notifications | ongoing |
+| **P5** Packaging | PKGBUILD → AUR; broaden device support | ongoing |
+
+See the full [roadmap PDF](vivo-linkkit-ROADMAP.pdf) for detail.
+
+## Interoperability statement
+
+This project exists **solely to enable interoperability** between an independently
+created program and vivo's device software. Reverse engineering strictly to obtain
+information necessary for interoperability of an independently created program is
+expressly permitted in several jurisdictions — e.g. India's Copyright Act
+§52(1)(ab), with analogous provisions elsewhere.
+
+We keep it clean:
+
+- **No redistributed vendor binaries, APKs, DLLs, or extracted keys/certs.** They
+  live in the gitignored `captures/` directory and never enter version control.
+- **Clean-room discipline.** We implement from the *documented protocol*, not by
+  transliterating decompiled code. Decompiled code informs the spec; the spec
+  informs the source.
+- **No shipped vendor secrets.** If pairing requires a vivo credential, we drive
+  the user's own account login instead of embedding one.
+
+*This is not legal advice.*
+
+## License
+
+TBD (a permissive license such as Apache-2.0 or MIT is anticipated).

@@ -1,0 +1,25 @@
+[project]
+name = "vivo-linkkit"
+version = "0.0.0"
+description = "Clean-room interoperability client for vivo Office Kit on Linux"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    # Kept intentionally minimal for the exploration phase. Add as needed:
+    #   "zeroconf",     # mDNS discovery, if that's the mechanism
+    #   "cryptography", # ECDH / AES-GCM once the crypto suite is known
+    #   "construct",    # declarative binary framing while iterating on the parser
+]
+
+[project.scripts]
+vivo-linkkit-explore = "vivolinkkit.explore:main"
+
+[project.optional-dependencies]
+instrument = ["frida-tools"]  # Windows-guest instrumentation (P0/P1)
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
