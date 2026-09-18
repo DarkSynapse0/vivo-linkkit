@@ -107,8 +107,27 @@ def capture_login(login_url: str, timeout_s: float = 300.0) -> dict:
 
     captured: dict = {}
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
-        page = browser.new_page()
+        # Disable the automation fingerprint so provider login pages (e.g. Google
+        # sign-in) don't refuse "insecure browser". Legitimate: it's the user's
+        # own login, we're just not advertising that it's script-launched.
+        browser = p.chromium.launch(
+            headless=False,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-first-run", "--no-default-browser-check",
+            ],
+        )
+        context = browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            ),
+            viewport={"width": 1200, "height": 820},
+        )
+        context.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+        )
+        page = context.new_page()
 
         def on_frame_nav(frame):
             url = frame.url
