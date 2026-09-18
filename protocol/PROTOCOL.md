@@ -135,16 +135,30 @@ Reference (gitignored): `captures/windows-client/app_src/` (Electron JS) and
 `PcsuiteConnectSDK.dll` + OpenSSL, SyncService, vdfs). The 447 MB installer stays
 in `~/Downloads/zen/` and is re-extractable with `7z` if more is needed.
 
-## 1. Discovery
+## 1. Discovery / pairing bootstrap
 
-From the PC client (verified in `app-connection.js`), three connect modes:
-- **`SCAN` (QR)** — primary. Phone shows a QR; PC scans it to get the phone's
-  IP + port (+ token). This is how the direct link bootstraps.
-- **Local network scan + BLE** — `startLocalNetworkScan()` + `start_ble_scan()`,
-  with proximity classes `NEARBY` / `FARAWAY` / `BOTH`.
-- **`QCLOUD`** — cloud-assisted relay for far-away devices (uses the account).
-- **Not mDNS on the PC path.** (The phone's idle `5353/udp` mDNS + `10191/tcp`
-  from `01_inventory` are noted but not the PC discovery mechanism.)
+Multiple connect modes (from `app-connection.js` / `components-connection.js`):
+
+- **QR scan — PC shows, phone scans (cloud-mediated).** Corrected direction: the
+  **PC generates the QR** (`createQRCode()`), the **phone scans it** with
+  EasyShare (`showPhoneScanModal`, `waitingScanGetPhone`). The QR is a URL:
+  ```
+  <baseUrl>?s=<sid>&f=pc&t=<token>&u=<account>&d=<hostName>&mac=<mac>
+  (intl/export build rewrites  https://  →  pcsuite:  scheme)
+  ```
+  It carries a **cloud session id `sid`**, not a raw IP. Flow:
+  1. PC logs into the vivo account (`passport.vivo.com.cn`).
+  2. PC → **`/scan/sid`** on `pcsuite-api.vivo.com` / `pc.vivo.com` → gets `sid`
+     (+ timeout); registers its `localIpArr` / `wifiDirectIp` under that `sid`.
+  3. PC renders the QR; polls **`/scan/getPhone`** for the scanner (`phoneSsid`).
+  4. Phone scans → resolves `sid` via cloud → learns PC IP + token → connects
+     directly (§2/§5).
+  → **QR pairing depends on vivo cloud + account reachability.**
+- **USB** — `/connect?active=usb` (direct, no cloud). **Preferred first target.**
+- **Wi-Fi Direct / local** — `startWifiDirect()`, `startLocalNetworkScan()` +
+  BLE (`start_ble_scan()`), proximity `NEARBY`/`FARAWAY`/`BOTH`; `localIpArr` can
+  ride in `codeInfo` — a more LAN-direct path.
+- Not mDNS on the PC path. (Phone's idle `5353/udp` + `10191/tcp` are unrelated.)
 
 ## 2. Transport & ports
 
@@ -203,10 +217,14 @@ From the PC client (verified in `app-connection.js`), three connect modes:
 ## 5. Pairing handshake (message-by-message)
 
 Reconstructed skeleton from the PC JS (fields to confirm with a live capture):
-1. **Precondition:** user is logged into their vivo account on the PC
-   (`isLoginedVivoAccount()`); `CONNECT_ROUTER.cloudAuth` for authorization.
-2. **Discover:** QR scan (or local/BLE scan) → obtain phone **IP + port + token**.
-3. **Probe:** `CONNECT_ROUTER.version` / `baseinfo` over `https/wss://ip:port`.
+1. **Precondition:** user logged into the vivo account on the PC
+   (`isLoginedVivoAccount()`, `passport.vivo.com.cn`); `CONNECT_ROUTER.cloudAuth`.
+2. **Bootstrap (mode-dependent):**
+   - *QR mode:* PC gets a `sid` from `/scan/sid`, shows the QR; phone scans and
+     resolves the PC's IP+token via cloud (`/scan/getPhone`) — see §1.
+   - *USB / Wi-Fi-Direct mode:* address obtained directly (no cloud), the path we
+     should prefer for a distributable client.
+3. **Probe:** `CONNECT_ROUTER.version` / `baseinfo` over `https/wss://<ip>:<port>`.
 4. **Connect request:** `CONNECT_ROUTER.devConnectRequest`.
 5. **Verify code:** phone emits `NOTIFY_VERIFY_CODE`; a numeric code is shown for
    user confirmation (`phoneVerCode`, `setPhoneVerCode`).
@@ -243,13 +261,23 @@ wrapped (RSA/`createRequestSign`) on top of TLS.
 
 ---
 
-## Open questions
+## Resolved
+- ✅ Auth model: account login required + QR/verify-code/handshake (§0).
+- ✅ Session crypto: AES-256-CBC, PC-generated key/iv sent to phone (§4).
+- ✅ QR direction + format: PC shows, phone scans; cloud `sid` URL (§1).
+- ✅ Transport/framing: wss + JSON `MESSAGE_EVENT_TYPE` / `CONNECT_ROUTER` (§2/§3).
 
-- **Is account login required for local pairing?** (decides §0)
-- Where does `com.vivo.security` perform crypto — native lib, cloud, or Java?
-- Exact discovery transport (BLE vs mDNS vs Wi-Fi Direct) and session ports.
-- Is there a separate `connbase` background *service* process (native) that owns
-  the socket + encryption, with this APK as just a client/UI?
+## Open questions (remaining — need a live capture / build-and-observe)
+- Can a **USB or Wi-Fi-Direct connect fully avoid the vivo cloud** (`/scan/*`)?
+  This decides how self-contained a distributable client can be. **Key strategic
+  question for P2.**
+- Exact **verify-code** check (who computes/compares it, digits, where shown).
+- Is the connect payload **additionally wrapped** (`createRequestSign` / RSA) on
+  top of TLS, or is TLS the only envelope?
+- Which side is the **WSS server** in each mode (PC-hosts vs phone-hosts)?
+- Wire-level **video** codec/packetization for VivoScreen (H.264 vs H.265, RTP?).
+- Whether we can **drive the account login headlessly** enough to obtain the
+  session token (mitmproxy the `passport`/`cloudAuth` flow).
 
 ## References (our own captures — never commit the raw files)
 
