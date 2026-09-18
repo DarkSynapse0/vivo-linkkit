@@ -47,16 +47,18 @@ ACCOUNT_HOSTS = {
     "ru": "ru-passport.vivo.com",
     "eu": "passport.vivo.com",
 }
-# gateway that answers the account API (region-selected). This is the `psuite`
-# family (client's gatewayProdHost) — the same host as the getHtml redirect page,
-# NOT pcsuite-api. The account API sits under a /vbusiness prefix.
-GATEWAYS = {
-    "cn": "https://psuite.vivo.com.cn",
-    "asia": "https://asia-psuite.vivo.com",
-    "in": "https://in-psuite.vivo.com",
-    "ru": "https://ru-psuite.vivo.com",
-    "eu": "https://eu-psuite.vivo.com",
+# psuite gateway host per region (client's gatewayProdHost). This is BOTH the
+# redirect (getHtml) host and the account-API host — the token is region-scoped,
+# so login host, redirect host, and gateway must all match the account's region.
+PSUITE_HOSTS = {
+    "cn": "psuite.vivo.com.cn",
+    "asia": "asia-psuite.vivo.com",
+    "in": "in-psuite.vivo.com",
+    "ru": "ru-psuite.vivo.com",
+    "eu": "eu-psuite.vivo.com",
+    "kz": "kz-psuite.vivo.com",
 }
+REDIRECT_PATH = "/vbusiness/account/cookie/getHtml"
 
 # The redirect page whose hidden <input> carries the credentials (§8 step 2).
 REDIRECT_MARKER = "vbusiness/account/cookie/getHtml?openid="
@@ -232,22 +234,22 @@ def main() -> None:
                     help="account/gateway region (default: asia — the global build)")
     ap.add_argument("--account-host", help="override the passport host")
     ap.add_argument("--gateway", help="override the pcsuite-api gateway base URL")
-    ap.add_argument("--redirect-uri", default="https://psuite.vivo.com.cn"
-                    "/vbusiness/account/cookie/getHtml",
-                    help="OAuth redirect_uri (the credential page)")
+    ap.add_argument("--redirect-uri", default=None,
+                    help="OAuth redirect_uri (default: region's psuite getHtml page)")
     ap.add_argument("--client-id", default=DEFAULT_CLIENT_ID)
     ap.add_argument("--login-url", help="full passport login URL (skips builder)")
     ap.add_argument("--lang", default="en")
     args = ap.parse_args()
 
     account_host = args.account_host or ACCOUNT_HOSTS[args.region]
-    # The token exchange must hit the SAME host as the redirect page, because the
-    # vivo_account_cookie_* session cookies are scoped to that host. Default the
-    # gateway to the redirect_uri's host (override with --gateway).
-    redirect_host = urllib.parse.urlparse(args.redirect_uri).netloc
-    gateway = args.gateway or f"https://{redirect_host}"
+    # The token is region-scoped: login host, redirect host, and gateway must all
+    # match the account's region (e.g. India → in-passport / in-psuite).
+    redirect_uri = args.redirect_uri or f"https://{PSUITE_HOSTS[args.region]}{REDIRECT_PATH}"
+    # Token exchange must hit the SAME host as the redirect (cookie scope).
+    gateway = args.gateway or f"https://{urllib.parse.urlparse(redirect_uri).netloc}"
     login_url = args.login_url or build_login_url(
-        account_host, args.client_id, args.redirect_uri, args.lang)
+        account_host, args.client_id, redirect_uri, args.lang)
+    print(f"[login] region={args.region}  account={account_host}  gateway={gateway}")
 
     creds = capture_login(login_url)
     AUTH_DIR.mkdir(parents=True, exist_ok=True)
