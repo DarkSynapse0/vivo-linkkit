@@ -272,23 +272,63 @@ wrapped (RSA/`createRequestSign`) on top of TLS.
 
 ---
 
+## 8. Account login & token (P2 blueprint) — VERIFIED
+
+Login is a **user-driven web flow**; we drive the user's OWN login. **No embedded
+app secret/key found** (only public RSA keys, §4) — clean-room-safe.
+
+1. **Login page:** open passport in a webview/browser —
+   `https://passport.vivo.com.cn` (or `.com`), `client_id=130`, dynamic
+   `redirect_uri`. User authenticates via **SMS code or password**.
+2. **Credential capture** (`preload-welcome.js`): passport redirects to
+   `…/vbusiness/account/cookie/getHtml?openid=<openid>`; that page holds a hidden
+   `<input>` whose value is `k=v&k=v…`. The preload reads it, `.split("&")`, and
+   IPCs **`login-success`** with the fields (openid, vivoToken, …). Verified:
+   ```js
+   if (i.includes("vbusiness/account/cookie/getHtml?openid=")) {
+     const n = (document.querySelector('input[type="hidden"]')?.getAttribute("value")||"").split("&");
+     o.sendToHost("login-success", n);
+   }
+   ```
+3. **Token exchange:** `POST /account/getTokenByVivoTokenAndOpenid` → `{ token }`.
+   Verified: `getTokenByVivoTokenAndOpenid = () => requestBranch({url:
+   "/account/getTokenByVivoTokenAndOpenid", method:"post"})`; caller uses `.token`.
+4. **Authenticated calls:** the returned token is **`newToken`**, attached as an
+   HTTP **header** on every gateway call (`e.defaults.headers.newToken = n`;
+   `headers:{newToken:…}`) and as the per-session connect token in the device/wss
+   payload (`newToken: getConnectToken()`).
+5. **Gateway hosts (region-selected):** `pcsuite-api.vivo.com` (CN);
+   `asia-/in-/eu-/ru-/de-gdpr-pcsuite-api.vivoglobal.com` (global). Device
+   register/scan: `/scan/sid` → `/scan/getPhone` (§1). `connection-center.vivo.com.cn`
+   is also referenced (role unconfirmed).
+6. **Request signing:** `createRequestSign()` exists; exact inputs `TODO` (no
+   secret embedded, so likely token/timestamp/nonce based).
+
+**Client blueprint (P2):** open the passport login in a system browser/webview →
+capture the redirect's hidden-input fields (openid + vivoToken) → `POST
+getTokenByVivoTokenAndOpenid` → hold `newToken` → send it as the `newToken` header
+on gateway calls and as the connect token. Legitimate "drive the user's own login."
+
+`TODO`: exact redirect host/params, `getTokenByVivoTokenAndOpenid` request body +
+full response shape, `createRequestSign` inputs.
+
 ## Resolved
 - ✅ Auth model: account login required + QR/verify-code/handshake (§0).
 - ✅ Session crypto: AES-256-CBC, PC-generated key/iv sent to phone (§4).
 - ✅ QR direction + format: PC shows, phone scans; cloud `sid` URL (§1).
 - ✅ Transport/framing: wss + JSON `MESSAGE_EVENT_TYPE` / `CONNECT_ROUTER` (§2/§3).
+- ✅ Login/token flow: passport web login → `getTokenByVivoTokenAndOpenid` →
+  `newToken` header (§8). No embedded secret.
 
 ## Open questions (remaining — need a live capture / build-and-observe)
 - Can a **USB or Wi-Fi-Direct connect fully avoid the vivo cloud** (`/scan/*`)?
   This decides how self-contained a distributable client can be. **Key strategic
   question for P2.**
 - Exact **verify-code** check (who computes/compares it, digits, where shown).
-- Is the connect payload **additionally wrapped** (`createRequestSign` / RSA) on
-  top of TLS, or is TLS the only envelope?
+- `getTokenByVivoTokenAndOpenid` request body + full response; `createRequestSign`
+  inputs (is any gateway call signed beyond the `newToken` header + TLS?).
 - Which side is the **WSS server** in each mode (PC-hosts vs phone-hosts)?
 - Wire-level **video** codec/packetization for VivoScreen (H.264 vs H.265, RTP?).
-- Whether we can **drive the account login headlessly** enough to obtain the
-  session token (mitmproxy the `passport`/`cloudAuth` flow).
 
 ## References (our own captures — never commit the raw files)
 
