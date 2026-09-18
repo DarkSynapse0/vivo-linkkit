@@ -1,6 +1,12 @@
 # vivo-linkkit
 
-An independent, **clean-room interoperability** client for vivo Office Kit on Linux.
+Clean-room interoperability client for vivo Office Kit / PC Suite on Linux —
+reverse-engineering the phone↔PC protocol (pairing, mirroring, file transfer) and
+reimplementing it, scrcpy-style. No vendor binaries.
+
+<!-- GitHub "About" → use the line above. Topics: reverse-engineering,
+     interoperability, vivo, linux, scrcpy, screen-mirroring, clean-room,
+     android, originos -->
 
 > We do **not** port or modify vivo's software. We observe how the phone and the
 > official desktop client talk to each other, document that protocol, and
