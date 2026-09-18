@@ -4,10 +4,10 @@
 > collaborators. Everything here is derived by clean-room observation; fill each
 > section with *observed facts*, and mark guesses as `TODO`/`?`.
 
-**Status:** 🟢 Phase 1 mostly done — **the pivotal pairing question is answered**
-(user-account login required + QR/verify-code/handshake local trust; distributable
-by driving the user's own login). Transport/framing/cipher identified from the
-Electron client. Remaining: key/iv derivation + byte-level details (live capture).
+**Status:** 🟢 Phase 1 largely done — **pairing question answered** (account login
++ QR/verify-code/handshake; distributable by driving the user's own login) and
+**session crypto solved** (AES-256-CBC; PC generates key+iv and sends them, §4).
+Remaining: byte-level QR/verify-code details, best confirmed with a live capture.
 **Scope (first target):** one device family (below), reversed from the phone-side
 agent first (jadx). Transport captures not yet taken.
 
@@ -172,15 +172,31 @@ From the PC client (verified in `app-connection.js`), three connect modes:
 - (`PcsuiteConnectSDK.dll` also embeds nlohmann::json — consistent JSON framing
   at the native layer.)
 
-## 4. Crypto — VERIFIED (from Electron JS)
+## 4. Crypto — SOLVED (from Electron JS) ✅
 
-- **Transport:** TLS via **WSS/HTTPS** to the phone.
-- **App-level payload cipher:** **`aes-256-cbc`** (primary; some `aes-128-cbc`
-  and `AES-GCM` paths too), via Node `crypto.createCipheriv(...)`, using
-  **`applicationInitData.key`** + **`applicationInitData.iv`** (+ `pcDeviceId`).
-- **Key establishment: `TODO`** — how `key`/`iv` are derived (from the handshake
-  + verify code + account token?) is the main crypto unknown. Next: trace
-  `applicationInitData` population in `app-connection.js`, and/or a live capture.
+- **Transport:** TLS via **WSS/HTTPS** to the phone (`wss://`/`https://`, with
+  ws/http fallback).
+- **App-level payload cipher:** **`aes-256-cbc`**, via Node `createCipheriv`,
+  using `applicationInitData.key` + `.iv`.
+- **Key/IV establishment — no derivation to reverse:** the **PC generates them
+  and sends them to the phone.** From `getApplicationKey()` in the common util
+  module (beautified `app-connection.js` ~L7003–7045):
+  ```js
+  alphabet = "a-zA-Z0-9"                    // 62 chars
+  createRandomStr(n): n chars picked via Math.random()
+  key = createRandomStr(32)   // 32 ASCII chars = 32 bytes → AES-256 key
+  iv  = createRandomStr(16)   // 16 ASCII chars = 16 bytes → 128-bit IV
+  ```
+  Generated once per PC process; **key/iv are placed in the connect request**
+  (`§5`, alongside `pcDeviceId`, `accountOpenId`) and sent to the phone over TLS.
+  → **Both endpoints use the PC-chosen key/iv.** Our client does the same: pick a
+  32-byte key + 16-byte IV, send them, then AES-256-CBC the payloads. **Unblocked.**
+- **Note (not a blocker):** key/iv come from `Math.random()` (not a CSPRNG) and
+  the key is restricted to `[A-Za-z0-9]` — weak entropy, but irrelevant to interop
+  (we just need to speak the format). TLS wraps the exchange.
+- **Separate RSA path (cloud, not phone):** `rsaEncrypt()` uses a hardcoded
+  RSA-1024 public key (distinct values for prod / `pre.vivo.com` / `test.vivo.com`)
+  to talk to the vivo **gateway** (account/cloud auth) — not the phone session.
 - Phone-side note: `com.vivo.security` ("JVQ") is **not** on the pairing path;
   the `SecUtils.java` RSA/AES + `publicKey.txt` is **VCode telemetry**, unrelated.
 
@@ -194,12 +210,16 @@ Reconstructed skeleton from the PC JS (fields to confirm with a live capture):
 4. **Connect request:** `CONNECT_ROUTER.devConnectRequest`.
 5. **Verify code:** phone emits `NOTIFY_VERIFY_CODE`; a numeric code is shown for
    user confirmation (`phoneVerCode`, `setPhoneVerCode`).
-6. **Handshake:** `CONNECT_ROUTER.handshake` — establishes the session; this is
-   where `applicationInitData.key`/`iv` are expected to be set (verify).
-7. **Session:** JSON `MESSAGE_EVENT_TYPE` frames, `HEART_MSG` keepalive.
+6. **Handshake:** `CONNECT_ROUTER.handshake` — the connect payload carries the
+   PC-generated **`key`** + **`iv`** (§4) plus `pcDeviceId`, `pcDeviceName`,
+   `accountOpenId`, `accountName`, `connectType`. This establishes the shared
+   AES-256-CBC session material on the phone.
+7. **Session:** JSON `MESSAGE_EVENT_TYPE` frames (AES-256-CBC), `HEART_MSG`
+   keepalive.
 
-`TODO`: exact byte-level contents of the QR, the verify-code check, and the
-key/iv derivation — confirm via live capture / deeper JS read.
+`TODO` (byte-level, best nailed via a live capture): exact QR field encoding,
+the verify-code check, and whether the whole connect payload is additionally
+wrapped (RSA/`createRequestSign`) on top of TLS.
 
 ## 6. Session messages
 
