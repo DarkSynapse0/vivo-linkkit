@@ -13,23 +13,23 @@ warn() { printf '\033[1;33m[bootstrap]\033[0m %s\n' "$*" >&2; }
 # Grouped by role. Adjust for your distro if not on Arch.
 PACMAN_PKGS=(
   python python-pip          # exploration client
-  android-tools              # adb / fastboot — device inventory
-  jadx apktool               # phone-agent decompile  (jadx may be AUR)
-  wireshark-cli              # tshark for capture parsing
+  android-tools              # adb — device inventory / decompile
+  jadx                       # phone-agent decompile (extra repo)
+  p7zip                      # unpack the Electron installer (app.asar)
+  wireshark-cli              # tshark for live capture
   nmap                       # port sweep
-  ffmpeg                     # verify decoded H.264 frames
+  ffmpeg                     # decode/verify H.264 mirroring frames
 )
 
 if command -v pacman >/dev/null 2>&1; then
   log "Installing host packages via pacman (sudo required)…"
   # --needed skips already-installed; don't fail the whole run on one missing pkg.
   sudo pacman -S --needed --noconfirm "${PACMAN_PKGS[@]}" || \
-    warn "Some pacman packages failed — jadx is often in the AUR (try: yay -S jadx)."
+    warn "Some pacman packages failed. jadx also works portably: download the zip"
+  warn "from github.com/skylot/jadx/releases and unzip to ~/.local/share/jadx"
 else
   warn "pacman not found. Install these manually: ${PACMAN_PKGS[*]}"
 fi
-
-# frida-tools for instrumentation (installed in the venv below, not system-wide).
 
 # ── Python venv ────────────────────────────────────────────────────────
 if [[ ! -d .venv ]]; then

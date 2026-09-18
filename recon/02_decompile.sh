@@ -18,6 +18,11 @@ log() { printf '\033[1;34m[decompile]\033[0m %s\n' "$*"; }
 
 command -v adb  >/dev/null || { echo "adb not found — run scripts/bootstrap.sh"; exit 1; }
 
+# Resolve jadx: prefer PATH, fall back to the portable install under ~/.local.
+if command -v jadx >/dev/null; then JADX=jadx
+elif [[ -x "$HOME/.local/share/jadx/bin/jadx" ]]; then JADX="$HOME/.local/share/jadx/bin/jadx"
+else JADX=""; fi
+
 # ── Pull the APK(s) — split APKs are common ────────────────────────────
 log "Locating APK path(s) for $PKG"
 mapfile -t APKS < <(adb shell pm path "$PKG" 2>/dev/null | sed 's/^package://' | tr -d '\r')
@@ -33,12 +38,12 @@ BASE_APK="$OUT/base.apk"
 [[ -f "$BASE_APK" ]] || BASE_APK="$OUT/$(basename "${APKS[0]}")"
 
 # ── Decompile with jadx (Java) ─────────────────────────────────────────
-if command -v jadx >/dev/null; then
-  log "Running jadx → $OUT/jadx"
-  jadx --no-res -d "$OUT/jadx" "$BASE_APK" >/dev/null 2>&1 || \
+if [[ -n "$JADX" ]]; then
+  log "Running jadx ($JADX) → $OUT/jadx"
+  "$JADX" --no-res -d "$OUT/jadx" "$BASE_APK" >/dev/null 2>&1 || \
     log "jadx reported errors (partial output is still useful)"
 else
-  log "jadx not installed (AUR: yay -S jadx) — skipping Java decompile"
+  log "jadx not found (install to ~/.local/share/jadx) — skipping Java decompile"
 fi
 
 # ── Auto-grep for protocol signals ─────────────────────────────────────

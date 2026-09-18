@@ -26,20 +26,25 @@ class Device:
 
 
 def discover(timeout: float = 5.0) -> list[Device]:
-    """Find vivo devices on the local segment.
+    """Find vivo devices — primary path is scanning the phone's pairing QR.
 
-    Mechanism (mDNS / UDP broadcast / BLE) is TBD — see PROTOCOL.md §1.
+    Per PROTOCOL.md §1 the official client uses QR scan (primary) + local/BLE
+    scan. Simplest first implementation: parse a QR the user shows us to get the
+    phone's IP + port (+ token), and return that as a Device.
     """
-    raise NotImplementedError("discovery — fill in from PROTOCOL.md §1")
+    raise NotImplementedError("discovery — parse pairing QR; see PROTOCOL.md §1")
 
 
 def pair(device: Device) -> "Session":
-    """Perform the pairing handshake and return an authenticated session.
+    """Establish an authenticated session (PROTOCOL.md §0/§5).
 
-    The auth model (local trust / account / vendor credential) is the pivotal
-    unknown — see PROTOCOL.md §0. This function's shape depends on the answer.
+    Flow: user must be logged into their own vivo account (we drive their login,
+    never embed a secret), then over ``wss://<ip>:<port>``:
+    CONNECT_ROUTER.version/baseinfo → devConnectRequest → NOTIFY_VERIFY_CODE
+    (numeric confirm) → handshake (sets the aes-256-cbc key/iv). Key/iv
+    derivation is the open unknown — see §4.
     """
-    raise NotImplementedError("pairing — fill in from PROTOCOL.md §0 and §5")
+    raise NotImplementedError("pairing — drive account login + QR/verify/handshake")
 
 
 @dataclass

@@ -38,9 +38,12 @@ all. Answer it in Phase 1 before investing further.
 1. **Phone side, first** — `jadx` on the Office Kit Android agent surfaces ports,
    JSON/protobuf field names, discovery format, crypto suite, often the whole
    state machine. ~10× the signal of x86 disassembly.
-2. **Windows client, second** — Windows 11 VM + Frida. Hook send/recv and crypto
-   to read plaintext without breaking encryption. First check: `strings` + DLL
-   imports. Electron → `app.asar`; Qt/QML → extractable QML resources.
+2. **Windows client, second** — first check: `strings` + DLL imports. If Electron
+   → unpack `app.asar` for readable JS; if Qt/QML → extractable QML resources.
+   Only fall back to a Windows VM + Frida if the client is native/compiled.
+   **In this project the client is Electron** (`pcsuite` v6.8.2), so the protocol
+   was read from plaintext JS on Linux — no VM, no Frida needed. See
+   `protocol/PROTOCOL.md` §0b.
 
 **Do USB before Wi-Fi** — the wireless path likely stacks BLE + Wi-Fi Direct on
 top of the core protocol. USB is a clean single pipe; solve it first.
@@ -55,7 +58,6 @@ recon/03_capture.sh       usbmon / network / port-sweep captures
 protocol/PROTOCOL.md      the living spec — the heart of the project
 src/vivolinkkit/          Python exploration client (P2), later ported (P3)
 captures/                 gitignored — raw dumps, decompiled output, secrets
-frida/                    Frida hook scripts for the Windows client
 ```
 
 ## Phase discipline
@@ -70,5 +72,7 @@ frida/                    Frida hook scripts for the Windows client
 
 - Host: Arch Linux. Instrumentation guest: Windows 11 under QEMU/KVM, USB
   passthrough, **bridged** networking (not NAT — discovery needs same L2 segment).
-- Tools: `usbmon` + Wireshark (USB), Wireshark (wireless), `mitmproxy` (login),
-  Frida (plaintext in guest), `jadx`/`apktool` (phone agent).
+- Tools: `jadx` (phone agent — installed portably at `~/.local/share/jadx`),
+  `7z` (unpack the Electron installer), Wireshark/`tshark` (live capture),
+  `mitmproxy` (to drive/observe the vivo account login). Frida/VM only if a
+  future native client needs it.

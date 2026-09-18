@@ -10,9 +10,15 @@ An independent, **clean-room interoperability** client for vivo Office Kit on Li
 
 ## Status
 
-🚧 **Phase 0 / 1 — Recon & protocol mapping.** Nothing works yet. The immediate
-goal is to answer one question: **how is pairing authenticated?** See
-[`protocol/PROTOCOL.md`](protocol/PROTOCOL.md).
+🟢 **Phase 1 — protocol mapping, most of the way there.** The pivotal question is
+**answered**: pairing requires the user's **vivo account login** plus a local
+**QR + verify-code + handshake**, so the tool is **distributable** by driving the
+user's *own* login (no embedded secrets). The official Windows client is
+**Electron**, so the protocol was read from plaintext JS on Linux — **no VM, no
+Frida**. Transport is `wss://<phone>:<port>` carrying JSON; session cipher is
+`aes-256-cbc`; mirroring is H.264/265 via FFmpeg. Full detail (and the remaining
+unknowns — key/iv derivation, byte-level framing) in
+[`protocol/PROTOCOL.md`](protocol/PROTOCOL.md). No client code yet.
 
 ## Quick start
 
