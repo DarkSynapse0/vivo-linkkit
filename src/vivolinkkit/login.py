@@ -63,16 +63,23 @@ TOKEN_PATH = "/account/getTokenByVivoTokenAndOpenid"
 
 
 def build_login_url(account_host: str, client_id: str, redirect_uri: str,
-                    lang: str = "en") -> str:
-    """Best-effort passport login URL (params confirmed/pinned on first run)."""
+                    lang: str = "en", theme: str = "light",
+                    login_type: str = "1") -> str:
+    """Passport login URL, matching the client's construction (PROTOCOL.md §8):
+
+        <host>/#/login?client_id=&redirect_uri=&type=&theme=&lang=
+
+    Base is passport's hash-route SPA login (`.../#/login`), region-swapped host.
+    `type`/`theme` values are best-guess defaults, overridable, pinned on first run.
+    """
     params = {
         "client_id": client_id,
         "redirect_uri": redirect_uri,
-        "response_type": "code",
-        "type": "1",
+        "type": login_type,
+        "theme": theme,
         "lang": lang,
     }
-    return f"https://{account_host}/login?{urllib.parse.urlencode(params)}"
+    return f"https://{account_host}/#/login?{urllib.parse.urlencode(params)}"
 
 
 def parse_credentials(hidden_value: str) -> dict:
