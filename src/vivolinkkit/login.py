@@ -128,34 +128,44 @@ def capture_login(login_url: str, timeout_s: float = 300.0) -> dict:
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
         )
         page = context.new_page()
-
-        def on_frame_nav(frame):
-            url = frame.url
-            if REDIRECT_MARKER in url and not captured:
-                # Prefer the hidden input (matches preload-welcome.js); fall back
-                # to the openid already visible in the URL.
-                try:
-                    val = frame.eval_on_selector(
-                        'input[type="hidden"]', "el => el.value"
-                    ) or ""
-                except Exception:  # noqa: BLE001
-                    val = ""
-                captured.update(parse_credentials(val))
-                captured.setdefault("_redirect_url", url)
-
-        page.on("framenavigated", on_frame_nav)
         print(f"[login] opening passport login — sign in with your vivo account…\n"
               f"        {login_url}")
         page.goto(login_url)
-        # Wait until we've captured creds or the user/timeout gives up.
+
+        # Wait (up to timeout) for the post-login redirect to the credential page.
         try:
-            page.wait_for_event(
-                "framenavigated",
-                lambda _f: bool(captured),
-                timeout=timeout_s * 1000,
-            )
-        except Exception:  # noqa: BLE001 — timeout: fall through with whatever we got
+            page.wait_for_url("**cookie/getHtml*", timeout=timeout_s * 1000)
+        except Exception:  # noqa: BLE001 — timeout/other: capture whatever we have
             pass
+
+        url = page.url
+        if "cookie/getHtml" in url:
+            captured["_redirect_url"] = url
+            # openid (and anything else) rides in the URL query.
+            captured.update(parse_credentials(urllib.parse.urlparse(url).query))
+            # The page is DOM-ready now — read all hidden inputs (matches the
+            # client's preload-welcome.js), splitting each k=v&k=v value.
+            try:
+                page.wait_for_load_state("networkidle", timeout=8000)
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                vals = page.eval_on_selector_all(
+                    'input[type="hidden"]', "els => els.map(e => e.value)"
+                ) or []
+                captured["_hidden_inputs"] = vals
+                for v in vals:
+                    if v and "=" in v:
+                        captured.update(parse_credentials(v))
+            except Exception:  # noqa: BLE001
+                pass
+            # The page is `cookie/getHtml` — the token is likely a cookie.
+            try:
+                captured["_cookies"] = {
+                    c["name"]: c["value"] for c in context.cookies()
+                }
+            except Exception:  # noqa: BLE001
+                pass
         browser.close()
 
     if not captured:
@@ -164,11 +174,22 @@ def capture_login(login_url: str, timeout_s: float = 300.0) -> dict:
     return captured
 
 
+def find_vivo_token(creds: dict) -> str:
+    """Locate the vivoToken among URL fields, hidden inputs, or cookies."""
+    for k in ("vivoToken", "vivotoken", "vivo_token", "token"):
+        if creds.get(k):
+            return creds[k]
+    for name, val in (creds.get("_cookies") or {}).items():
+        if "token" in name.lower() and val:
+            return val
+    return ""
+
+
 def exchange_token(gateway: str, creds: dict, timeout_s: float = 15.0) -> dict:
     """POST /account/getTokenByVivoTokenAndOpenid → { token, ... }."""
     body = json.dumps({
         "openid": creds.get("openid", ""),
-        "vivoToken": creds.get("vivoToken") or creds.get("vivotoken", ""),
+        "vivoToken": find_vivo_token(creds),
     }).encode()
     req = urllib.request.Request(
         gateway + TOKEN_PATH, data=body, method="POST",
@@ -202,7 +223,13 @@ def main() -> None:
     AUTH_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     (AUTH_DIR / f"login-raw-{stamp}.json").write_text(json.dumps(creds, indent=2))
-    print(f"[login] captured fields: {sorted(creds)}")
+    # Observability without leaking secret values to the terminal:
+    print(f"[login] captured fields: {sorted(k for k in creds if not k.startswith('_'))}")
+    print(f"[login] openid: {'yes' if creds.get('openid') else 'no'}")
+    hidden = creds.get("_hidden_inputs") or []
+    print(f"[login] hidden inputs: {len(hidden)} (lengths: {[len(v or '') for v in hidden]})")
+    print(f"[login] cookie names: {sorted((creds.get('_cookies') or {}).keys())}")
+    print(f"[login] vivoToken located: {'yes' if find_vivo_token(creds) else 'no'}")
 
     if not creds.get("openid"):
         raise SystemExit("[login] captured redirect but no openid — inspect the "
