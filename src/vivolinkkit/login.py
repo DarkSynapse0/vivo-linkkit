@@ -24,10 +24,15 @@ Requires Playwright:
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
+import hmac
 import json
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -65,6 +70,47 @@ REDIRECT_MARKER = "vbusiness/account/cookie/getHtml?openid="
 
 # Token-exchange endpoint (§8 step 3) — under the /vbusiness prefix.
 TOKEN_PATH = "/vbusiness/account/getTokenByVivoTokenAndOpenid"
+
+# Every gateway request carries the client's "Cy" auth headers (getCyHeaders in
+# the client JS). The signature is base64(HMAC-SHA256) with the timestamp string
+# as the KEY and this constant as the MESSAGE (createRequestSign(msg, key)).
+CONNECT_NAME = "com.vivo.pcsuite.connect"
+APP_VERSION = "6.8.2"
+SYSTEM_VERSION = "10"
+
+
+def request_sign(timestamp_ms: int) -> str:
+    """base64(HMAC-SHA256(key=timestamp_str, msg=CONNECT_NAME)) — matches the JS."""
+    digest = hmac.new(str(timestamp_ms).encode(), CONNECT_NAME.encode(),
+                      hashlib.sha256).digest()
+    return base64.b64encode(digest).decode()
+
+
+def get_device_id() -> str:
+    """A stable client device id (client uses a stored newDeviceId)."""
+    p = AUTH_DIR / "device_id.txt"
+    if p.exists():
+        return p.read_text().strip()
+    AUTH_DIR.mkdir(parents=True, exist_ok=True)
+    did = uuid.uuid4().hex
+    p.write_text(did)
+    return did
+
+
+def cy_headers(openid: str, token: str = "") -> dict:
+    """Replicate getCyHeaders() from the client (source=3 → Windows)."""
+    ts = int(time.time() * 1000)
+    return {
+        "openId": openid,
+        "token": token,
+        "source": "3",
+        "timestamp": str(ts),
+        "sign": request_sign(ts),
+        "deviceId": get_device_id(),
+        "model": "win",
+        "systemVersion": SYSTEM_VERSION,
+        "appVersion": APP_VERSION,
+    }
 
 
 def build_login_url(account_host: str, client_id: str, redirect_uri: str,
@@ -204,13 +250,18 @@ def find_vivo_token(creds: dict) -> str:
 
 
 def exchange_token(gateway: str, creds: dict, timeout_s: float = 15.0) -> dict:
-    """POST the token endpoint. The client relies on the vivo_account_cookie_*
-    cookies being sent, so we forward them; openid/vivoToken also go in the body."""
+    """POST the token endpoint with the client's Cy auth headers + account cookies.
+    openid/vivoToken also go in the body; the server also reads the cookies."""
+    openid = find_openid(creds)
     body = json.dumps({
-        "openid": find_openid(creds),
+        "openid": openid,
         "vivoToken": find_vivo_token(creds),
     }).encode()
-    headers = {"Content-Type": "application/json", "User-Agent": "vivo-linkkit/0"}
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "vivo-linkkit/0",
+        **cy_headers(openid),  # openId/source/timestamp/sign/deviceId/model/…
+    }
     cookies = creds.get("_cookies") or {}
     if cookies:
         headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
