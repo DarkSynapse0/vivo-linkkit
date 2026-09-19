@@ -453,9 +453,28 @@ wrapped (RSA/`createRequestSign`) on top of TLS.
     vivo's *own* mirror is an on-device **privileged grant** (root, or a Shizuku
     shell-UID helper) that satisfies MediaProjection; absent that, the interim mirror
     engine is the `app_process` capture path (`vivolinkkit mirror`, drives scrcpy).
-  - **`appops set com.vivo.pcsuite PROJECT_MEDIA allow` does NOT bypass** on Android
-    16 (tested) — the consent still self-cancels; modern Android ignores the app-op
-    pre-grant for MediaProjection.
+  - **ADB-only bypass attempts — all fail on Android 16 (tested 2026-09-19).** The
+    root cause is that `MediaProjectionActivity`, launched from the background ws
+    handler, never becomes the real foreground task (launcher stays
+    `topResumedActivity`); the system consent finishes with `finish-imm:transit`
+    before it can wait for a tap. Everything reachable from `adb`/shell (no root)
+    was tried and none moved the ~29 ms self-cancel:
+    - `appops set com.vivo.pcsuite PROJECT_MEDIA allow` — the known RustDesk/AnyDesk
+      trick; ignored here (the BAL cancel happens *before* the app-op is evaluated).
+    - `appops set … SYSTEM_ALERT_WINDOW allow` + `pm grant … SYSTEM_ALERT_WINDOW` —
+      no effect. (Android 15+ narrowed the SAW→BAL exemption to require SAW **and a
+      currently-visible `TYPE_APPLICATION_OVERLAY`**; pcsuite's connect overlay is
+      already gone by trigger time.)
+    - `am compat disable FGS_SAW_RESTRICTIONS com.vivo.pcsuite` (the change that adds
+      the visible-overlay requirement) + disabling the BAL PendingIntent change — no
+      effect (the block is on a *direct* `startActivity`, not a PendingIntent, and is
+      enforced by ActivityTaskManager on the calling context, not a pcsuite compat
+      flag).
+    So from a clean-room PC-over-ADB position the vivo-native consent cannot be made
+    to stick. The one untested lever is **root** (a `su`/privileged grant could set
+    the projection token or force-foreground the activity) — out of scope for a
+    distributable clean-room tool. Hence `vivolinkkit mirror` ships the consent-free
+    `app_process` path instead; see the source docstring.
 - **Input:** cross-device keyboard/mouse — `keyboardMouseCoordinationServer`.
 - **File transfer:** Vdfs (`VdfsClient`/`VdfsWsMsg`,
   `CONNECT_ROUTER.vdfsApplicationClient`) + the HTTP file APIs in §2.
