@@ -475,6 +475,29 @@ wrapped (RSA/`createRequestSign`) on top of TLS.
     the projection token or force-foreground the activity) — out of scope for a
     distributable clean-room tool. Hence `vivolinkkit mirror` ships the consent-free
     `app_process` path instead; see the source docstring.
+  - **Refinement (AOSP cross-check, 2026-09-19).** An AOSP source review pointed out
+    that `systemui/.../MediaProjectionPermissionActivity` has **no** generic
+    "caller-not-foreground → cancel" branch, so the self-cancel isn't that activity
+    doing a BAL check. The `-b events` buffer confirms the shape precisely: the
+    consent goes `performCreate` → `wm_add_to_stopping … completeFinishing` in **~4
+    ms** — i.e. it cancels **inside `onCreate`, before the dialog is shown**. AOSP's
+    onCreate cancel paths are: invalid/missing calling package · projection-service
+    exception · device-policy restriction · (already-authorized → `RESULT_OK`).
+    Ruled out on this device: **device policy** (`dumpsys device_policy` →
+    "Screen capture disallowed users: []") and a **stale session** (`dumpsys
+    media_projection` → "Media Projection: null"). The remaining causes (null calling
+    package, or `MediaProjectionManagerService.createProjection` throwing) can't be
+    distinguished by log — vivo's production build **strips** the ActivityStarter /
+    `BackgroundActivityStartController` / MediaProjection reason logs (verbose
+    `setprop` doesn't re-enable them; they're compile-time gated). Both remaining
+    causes trace back to the same origin, though: our `MediaProjectionActivity` never
+    becomes the resumed/focused task (launcher stays `topResumedActivity`), so its
+    `startActivityForResult` has no valid foreground caller identity. BAL explains
+    why the *app* activity can't foreground; that then makes the *systemui* consent
+    cancel in onCreate. Net: same wall, better understood — the fix still requires a
+    genuine foreground launch (platform signature, on-device user gesture, or root).
+    `MANAGE_MEDIA_PROJECTION` (the only API that could mint/inject the token for
+    another UID) is `signature|role:systemui` and unreachable from shell/Shizuku.
 - **Input:** cross-device keyboard/mouse — `keyboardMouseCoordinationServer`.
 - **File transfer:** Vdfs (`VdfsClient`/`VdfsWsMsg`,
   `CONNECT_ROUTER.vdfsApplicationClient`) + the HTTP file APIs in §2.
