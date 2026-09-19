@@ -521,6 +521,22 @@ wrapped (RSA/`createRequestSign`) on top of TLS.
     sanctioned alternative) is a system-server-only path. So the boundary sits at the
     framework result-attribution layer — still unreachable from a clean-room PC/ADB
     client without the platform signature or root.
+  - **Why `resultTo` is null — narrowed (manifest, 2026-09-19).** A follow-up review
+    flagged the likely cause as the source being `singleInstance` (AOSP force-adds
+    `NEW_TASK` to a `singleInstance` source's child, then drops the result). Pulled
+    the APK and decoded the manifest (`jadx --no-src`): the vendor
+    `com.vivo.pcsuite.cast.MediaProjectionActivity` is declared **`standard`** launch
+    mode (`taskAffinity="com.vivo.pcsuite.authority"`, `excludeFromRecents`,
+    `TransparentTheme`; the neighbouring `singleInstance` is `MainActivity`, not
+    this). The captured consent child intent carries **no `FLAG_ACTIVITY_NEW_TASK`**
+    (`flg=0x800000`). So the null `resultTo` is NOT stock AOSP's
+    `singleInstance -> NEW_TASK -> drop result` path — it's a **vivo-specific
+    result-attribution behavior** (either the source is `finishing` when it calls
+    `startActivityForResult` — e.g. the 300 ms re-entrant `o()` watchdog — or an OEM
+    WM modification). Either way it's internal to the vendor app/framework; the
+    result token is a caller-supplied Binder, not a permission-backed resource, so an
+    external shell/ADB client cannot influence it. Confirms vivo-native mirror needs
+    the platform signature or root.
 - **Input:** cross-device keyboard/mouse — `keyboardMouseCoordinationServer`.
 - **File transfer:** Vdfs (`VdfsClient`/`VdfsWsMsg`,
   `CONNECT_ROUTER.vdfsApplicationClient`) + the HTTP file APIs in §2.
