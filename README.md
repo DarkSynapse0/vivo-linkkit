@@ -46,14 +46,18 @@ also *corrected* several decompile-era guesses. What's now evidence-verified:
   not a cloud credential. The phone trusts it because the account `openid` proves
   *same-account*. ⇒ a **cloud-free USB connect is feasible**.
 
-**Phase 3 in progress:** a cloud-free USB connect PoC
+**Phase 3 — cloud-free USB connect PROVEN.** A clean-room client
 ([`src/vivolinkkit/connect_usb.py`](src/vivolinkkit/connect_usb.py)) drives adb
-from Linux with a **self-minted** token. Verified: `AdbPortalService` starts with
-**no on-screen confirmation** (USB-access trust), and the phone binds its
-`:10380` server once the PC hosts the reverse channels (`5679`/`8904`). Remaining
-blocker: `:10380` closes `/base-info` without a response until those reverse
-channels speak their real handshake — next is decoding them from the usbmon
-capture, then reading the `:10381` TLS. Full detail in
+from Linux with a **self-minted** token and the phone accepts it —
+`POST /base-info` → `{"code":"0000", …device info…}`. **No vivo cloud call, no
+on-screen confirmation, no pairing** (a random `pcDeviceId` works; the trust is
+purely the same-account `openid` + our PC-minted token). The one non-obvious
+requirement: the PC must hold reverse listeners on `5679`/`8904` open, then
+`adb forward 10380` and `POST /base-info` first. This confirms the whole thesis:
+a distributable, secret-free, cloud-free client is possible.
+
+**Next:** read the `:10381` TLS media/control stream (screen mirror §5, file
+transfer) — the real feature work. Full detail in
 [`protocol/PROTOCOL.md`](protocol/PROTOCOL.md).
 
 ## Quick start
@@ -82,8 +86,8 @@ capture workflow, and keep filling in `protocol/PROTOCOL.md`.
 |------|------|------|
 | **P0** Recon & setup | Real data on the wire, not guesses | ✅ done |
 | **P1** Protocol map | Answer the pairing question; fill `PROTOCOL.md` | ✅ done |
-| **P2** Exploration client | Account login + token verified (200); pipe decoded | 🟡 in progress |
-| **P3** Real client | Smooth mirroring + input control (Rust/Go) | ⬜ next |
+| **P2** Exploration client | Account login (200) + cloud-free USB connect proven (`code 0000`) | 🟢 core done |
+| **P3** Real client | Read `:10381` TLS → mirroring + file transfer + input | 🟡 next |
 | **P4** Services | File transfer, clipboard, notifications | ⬜ |
 | **P5** Packaging | PKGBUILD → AUR; broaden device support | ⬜ |
 

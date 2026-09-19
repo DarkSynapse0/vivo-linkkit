@@ -192,19 +192,20 @@ Multiple connect modes (from `app-connection.js` / `components-connection.js`):
   mint our own token, `adb forward 10380`, `POST /base-info` with the account
   `openid` (proves same-account) + our token. Cloud is only needed for the
   account login (openid) and, on the Wi-Fi path, rendezvous.
-- **PoC findings (2026-09-19, `src/vivolinkkit/connect_usb.py`):** driving this
-  from Linux adb with a **self-minted** token —
-  - `am startservice … AdbPortalService --es token <ours>` starts the service
-    with **no on-screen confirmation** (launcher stays focused) → USB-access
-    trust confirmed at the service level.
-  - The phone binds its **`:10380` server ONLY after the PC hosts the reverse
-    channels** `adb reverse tcp:5679` / `tcp:8904` (no PC listener → `:10380`
-    never comes up; add listeners → it binds in ~1 s). New, verified dependency.
-  - **Still blocked:** `:10380` then accepts the TCP connect but **closes
-    `/version`|`/base-info` without a response** — the reverse channels need a
-    real handshake (likely TLS/custom framing), not a bare accept. Next: decode
-    the 8904/5679 reverse-stream bytes from `captures/pipe/phone-usb-bus3-*.pcap`
-    (the official connect) and speak that protocol.
+- **Cloud-free USB connect — PROVEN (2026-09-19, `src/vivolinkkit/connect_usb.py`).**
+  Driving adb from Linux with a **self-minted** token, `POST /base-info` returns
+  **`{"code":"0000", data:{…device info…}}`** — the phone accepts us. Recipe:
+  1. `am startservice … AdbPortalService --es token <ours>` — **no on-screen
+     confirmation** (launcher stays focused). USB-access trust.
+  2. The PC must **HOLD open** reverse listeners on `5679`+`8904` (then
+     `adb reverse` them); the phone binds `:10380` only while they exist, and
+     they must stay open through the handshake (a dumb accept-then-close fails).
+  3. `adb forward 10380`, settle ~1 s, `POST /base-info` with same-account
+     `openid` + our `token` + full body. **Send `/base-info` FIRST** — a failed
+     `/version` poisons the connection.
+  - **No pairing / device registration:** isolation-tested — a **random**
+    `pcDeviceId` (and random token) still returns 0000. The trust is purely
+    same-account `openid` + our PC-minted token. Fully self-sufficient client.
 - **`getPhone` response (VERIFIED):** `data` is a JSON *string* →
   ```json
   {"deviceType":"phone","bleId":"<6-digit>","openId":"<64-hex device openId>",
@@ -393,15 +394,13 @@ phone-connected capture.
   (§8). No exchange call, no `newToken`, no signature. No embedded secret.
 
 ## Open questions (remaining — need a live capture / build-and-observe)
-- Can a connect **fully avoid the vivo cloud**? **Largely answered (2026-09-19):**
-  the connect **token is PC-minted local trust** (§1/§8), and over **USB** the
-  phone is reached via **adb directly** — so the cloud `scan/*` rendezvous looks
-  **skippable for USB** (we don't need it to find the phone or to get a token).
-  The official client still calls `scan/*` alongside, but nothing in the pipe
-  depends on it. **To confirm:** build the minimal adb path (`adb forward 10380`
-  → `POST /base-info` with our own token + the login `openid`) with the network
-  offline and see if the phone accepts. Cloud is still needed for the account
-  login (openid) and for the **Wi-Fi** path's rendezvous.
+- Can a connect **fully avoid the vivo cloud**? **PROVEN for USB (2026-09-19):**
+  `connect_usb.py` connects with a self-minted token over pure adb — `/base-info`
+  returns `code 0000`, no cloud call from the client, no on-screen confirm, no
+  pairing (`scan/*` is skippable for USB). Cloud is needed only for the account
+  **login** (to get `openid`). Remaining check: run with the **phone in airplane
+  mode** to also rule out phone-side cloud validation of the openid; and the
+  **Wi-Fi** path still needs cloud rendezvous to find the phone's IP.
 - Capture the **actual device pipe** to the phone's LAN IP (wss, §2/§3) — it
   bypasses the HTTP proxy, so use a network capture (tshark on `virbr0`/`vnet0`),
   not mitmproxy. This is the P3 gateway (framing, `connectionId`/`openId` use).

@@ -19,12 +19,12 @@ Flow (matches the usbmon capture, 2026-09-19):
   5. HTTP POST 127.0.0.1:10380 /version then /base-info  with the `newToken`
      header.
 
-STATUS (2026-09-19): steps 1–4 work; :10380 binds. Step 5 still blocked — the
-phone accepts the TCP connection but closes /version|/base-info WITHOUT a
-response. The reverse channels (8904/5679) evidently need a real handshake
-(likely TLS/custom framing), not a dumb accept, before :10380 will serve. Next:
-decode the 8904/5679 reverse-stream bytes from the official usbmon capture
-(captures/pipe/phone-usb-bus3-*.pcap) and speak that protocol here.
+STATUS (2026-09-19): WORKS end-to-end — /base-info returns {"code":"0000",...}
+with a SELF-MINTED token and a RANDOM pcDeviceId. Proven: no pairing / device
+registration is needed; the trust is same-account openid + our token (PC-minted).
+The one non-obvious requirement is that the PC must HOLD the reverse channels
+(5679/8904) open — the phone binds :10380 only while they exist. No on-screen
+confirmation, no vivo cloud call from this client → cloud-free, distributable.
 
 Requirements:
   * adb on PATH, the phone plugged into THIS host, USB debugging authorized.
@@ -241,9 +241,8 @@ def connect(serial: str, hostname: str, dry_run: bool = False) -> None:
     for p in REVERSE_PORTS:
         adb(serial, "reverse", f"tcp:{p}", f"tcp:{p}")
 
-    # 3) launch the PCSUITE activity, then the AdbPortalService with our token.
-    adb(serial, "shell", "am", "start", "--ei", "intent_from", "1104",
-        "-a", PCSUITE_INTENT, "-f", "268435456")
+    # 3) start the AdbPortalService with our token (the `am start` activity the
+    #    official client also fires is NOT required — startservice alone works).
     adb(serial, "shell", "am", "startservice",
         "--es", "from", "pc",
         "--ei", "foreground", "0",
@@ -266,33 +265,33 @@ def connect(serial: str, hostname: str, dry_run: bool = False) -> None:
                          "may be unhealthy or the account doesn't match.")
     adb(serial, "forward", f"tcp:{PORT_HTTP}", f"tcp:{PORT_HTTP}")
     adb(serial, "forward", f"tcp:{PORT_TLS}", f"tcp:{PORT_TLS}")
+    time.sleep(1.0)   # let the reverse channels settle before the first request
 
-    # 5) the handshake: /version then /base-info.
-    print("\n[connect] POST /version …")
-    st, body = http_post(PORT_HTTP, "/version", {
-        "version": APP_VERSION,
-        "connBaseVersionCode": CONN_BASE_VERSION_CODE,
-        "pcSuiteVersionCode": PCSUITE_VERSION_CODE,
-        "timestamp": now_ms(),
-        "connectionId": conn_id,
-    }, token)
-    print(f"   → HTTP {st}: {body[:300]}")
-
-    print("\n[connect] POST /base-info …")
-    st2, body2 = http_post(PORT_HTTP, "/base-info", {
+    # 5) the handshake. /base-info is the one that matters — a 200
+    #    {"code":"0000",...} means we're connected. Send it FIRST (a failed
+    #    /version poisons the connection); retry a couple of times for the race.
+    base_body = {
         "pc_name": hostname,
-        "pcDeviceId": pc_device_id(),
+        "pcDeviceId": pc_device_id(),   # any value — device identity is NOT checked
         "isLogin": True,
-        "openid": openid,
+        "openid": openid,               # same-account openid == the trust
         "pcLoginAccount": acct or "",
         "isAutoConnect": False,
         "pcSystemType": "1",
         "isSupVdfs": True,
-        "token": token,
+        "token": token,                 # our self-minted token (== am startservice)
         "isPcOsSupportExtScreen": True,
         "pcBleId": pc_ble_id(),
-    }, token)
-    print(f"   → HTTP {st2}: {body2[:600]}")
+        "deviceAvatarUri": "",
+    }
+    st2, body2 = 0, ""
+    for attempt in range(3):
+        print(f"\n[connect] POST /base-info (attempt {attempt + 1}) …")
+        st2, body2 = http_post(PORT_HTTP, "/base-info", base_body, token)
+        print(f"   → HTTP {st2}: {body2[:600]}")
+        if st2 == 200:
+            break
+        time.sleep(1.0)
 
     # 6) verdict
     ok = False
@@ -305,8 +304,8 @@ def connect(serial: str, hostname: str, dry_run: bool = False) -> None:
         print("[connect] ✅ PROVEN: phone accepted our self-minted token — "
               "cloud-free USB connect works (local trust).")
         (AUTH_DIR / "connect-proof.json").write_text(json.dumps(
-            {"connectionId": conn_id, "version_status": st,
-             "base_info_status": st2, "base_info": body2[:4000]}, indent=2))
+            {"connectionId": conn_id, "base_info_status": st2,
+             "base_info": body2[:4000]}, indent=2))
         print(f"[connect] saved captures/auth/connect-proof.json")
     else:
         print(f"[connect] ⚠ /base-info did not return code 0000 (HTTP {st2}). "
