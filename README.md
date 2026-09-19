@@ -122,9 +122,11 @@ vivolinkkit connect \
     --watch 10                    # stream live control-plane events
 ```
 
-File kinds: `images videos audio docs webdocs files home`. Downloads and
-thumbnails land in `captures/downloads/` (gitignored). Run `vivolinkkit connect
---help` for all options.
+File kinds: `images videos audio docs files home`. `--list` returns the whole
+category and writes a full manifest (`size · path · name`) to
+`captures/downloads/<kind>.list.txt`; add `--limit N` to trim the on-screen
+preview. Downloads and thumbnails also land in `captures/downloads/` (gitignored).
+Run `vivolinkkit connect --help` for all options.
 
 ### Instrumentation (for extending the protocol)
 

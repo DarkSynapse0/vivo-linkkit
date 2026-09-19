@@ -263,24 +263,34 @@ _FILE_RE = _re.compile(
     r'"isLivePhoto":[^,]+,"savePath":"([^"]+)"')
 
 
-def fm_list(token: str, kind: str) -> tuple[int, list[tuple[str, int, str]]]:
-    """Return (http_status, [(fileName, fileSize, savePath), …]) for a category."""
+def fm_list(token: str, kind: str, page_number: int = 1_000_000
+            ) -> tuple[int, list[tuple[str, int, str]]]:
+    """Return (http_status, [(fileName, fileSize, savePath), …]) for a category.
+    `page_number` defaults high so the whole category comes back (no cap)."""
     typ, sort, group = FM_TYPES[kind]
     body = {"category": "", "data": "", "fileCount": 0, "sortCondition": sort,
-            "groupBy": group, "type": typ, "pageIndex": 0, "pageNumber": 200,
+            "groupBy": group, "type": typ, "pageIndex": 0, "pageNumber": page_number,
             "firstFlag": False}
     st, data = tls_post(PORT_HTTP, FM_CHANNEL, body, token)
     files = [(m.group(1), int(m.group(2)), m.group(3)) for m in _FILE_RE.finditer(data)]
     return st, files
 
 
-def list_files(token: str, kind: str) -> None:
+def list_files(token: str, kind: str, limit: int = 0) -> None:
+    """List a whole category. `limit`=0 prints every entry; >0 prints a preview.
+    A full manifest (size + path) is always written to captures/downloads/."""
     st, files = fm_list(token, kind)
     print(f"\n[files:{kind}] type={FM_TYPES[kind][0]} → HTTP {st}  ({len(files)} files)")
-    for n, s, _ in files[:20]:
+    shown = files if limit <= 0 else files[:limit]
+    for n, s, _ in shown:
         print(f"     {s:>12,}  {n}")
-    if len(files) > 20:
-        print(f"     … and {len(files) - 20} more")
+    if limit > 0 and len(files) > limit:
+        print(f"     … and {len(files) - limit} more (full list in the manifest)")
+    if files:
+        DL_DIR.mkdir(parents=True, exist_ok=True)
+        manifest = DL_DIR / f"{kind}.list.txt"
+        manifest.write_text("".join(f"{s}\t{p}\t{n}\n" for n, s, p in files))
+        print(f"     → full manifest ({len(files)} files): {manifest}")
 
 
 def tls_get(port: int, path: str, timeout: float = 30.0) -> tuple[int, bytes]:
@@ -374,7 +384,8 @@ def watch_events(token: str, seconds: float) -> None:
 def connect(serial: str, hostname: str, dry_run: bool = False,
             watch_seconds: float = 0.0, list_kinds: list[str] | None = None,
             grab: list[tuple[str, int]] | None = None,
-            thumbs: list[tuple[str, int]] | None = None) -> None:
+            thumbs: list[tuple[str, int]] | None = None,
+            list_limit: int = 0) -> None:
     openid, acct = load_account()
     token = secrets.token_hex(32)                 # <-- our OWN minted token
     conn_id = f"{secrets.token_hex(2)}_{now_ms()}"
@@ -463,7 +474,7 @@ def connect(serial: str, hostname: str, dry_run: bool = False,
              "base_info": body2[:4000]}, indent=2))
         print(f"[connect] saved captures/auth/connect-proof.json")
         for kind in (list_kinds or []):
-            list_files(token, kind)
+            list_files(token, kind, limit=list_limit)
         for kind, n in (grab or []):
             grab_files(token, kind, n)
         for kind, n in (thumbs or []):
@@ -494,6 +505,9 @@ def main() -> None:
                     help="after connecting, stream control-plane ws events for N s")
     ap.add_argument("--list", default="", metavar="KINDS",
                     help=f"comma-separated file lists to fetch: {','.join(FM_TYPES)}")
+    ap.add_argument("--limit", type=int, default=0, metavar="N",
+                    help="print only the first N of each list (0 = all; a full "
+                         "manifest is always saved to captures/downloads/)")
     ap.add_argument("--grab", default="", metavar="KIND:N",
                     help="download the first N files of a KIND to captures/downloads/ "
                          "(e.g. images:2,videos:1)")
@@ -518,7 +532,7 @@ def main() -> None:
     thumbs = _pairs(args.thumbs, "thumbs")
     serial = pick_device(args.serial) if not args.dry_run else (args.serial or "?")
     connect(serial, args.pc_name, dry_run=args.dry_run, watch_seconds=args.watch,
-            list_kinds=kinds, grab=grab, thumbs=thumbs)
+            list_kinds=kinds, grab=grab, thumbs=thumbs, list_limit=args.limit)
 
 
 if __name__ == "__main__":
