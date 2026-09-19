@@ -206,6 +206,14 @@ Multiple connect modes (from `app-connection.js` / `components-connection.js`):
   - **No pairing / device registration:** isolation-tested — a **random**
     `pcDeviceId` (and random token) still returns 0000. The trust is purely
     same-account `openid` + our PC-minted token. Fully self-sufficient client.
+  - **Control plane = plaintext WebSocket (VERIFIED, live with our token).** After
+    `/base-info`, open `ws://<phone>:10380/ws/heart-beat`. **Auth is the WS
+    subprotocol, not a header:** `Sec-WebSocket-Protocol: v1.hc.vivo.com.cn,
+    <token>` (token as the 2nd subprotocol; `Origin: file://`). Messages are
+    `EVENT_NAME:{json}` or a bare `{json}` heartbeat — observed:
+    `UPDATE_DEVICE_INFO:{"mobileDeviceId":…}`, `RE_CONNECT_ALBUM:{"auth":1,…}`,
+    `{"state":"normal"}`. This is the §3 framing, in the clear — only the
+    **`:10381` TLS** carries the video/bulk media. (`connect_usb.py --watch`.)
 - **`getPhone` response (VERIFIED):** `data` is a JSON *string* →
   ```json
   {"deviceType":"phone","bleId":"<6-digit>","openId":"<64-hex device openId>",

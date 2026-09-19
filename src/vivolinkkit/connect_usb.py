@@ -38,6 +38,7 @@ no cloud in the loop.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import secrets
 import socket
@@ -59,6 +60,8 @@ PCSUITE_INTENT = "vivo.intent.action.PCSUITE_INTENT"
 PORT_HTTP = 10380          # phone's PcSuite-HTTP server (control)
 PORT_TLS = 10381           # phone's TLS server (media/data)
 REVERSE_PORTS = [5679, 8904]   # phone→PC channels
+WS_PATH = "/ws/heart-beat"     # control-plane websocket (plaintext, on PORT_HTTP)
+WS_SUBPROTO = "v1.hc.vivo.com.cn"  # 1st WS subprotocol; the token is the 2nd
 APP_VERSION = "6.8.2"
 CONN_BASE_VERSION_CODE = 1155
 PCSUITE_VERSION_CODE = 65011
@@ -218,8 +221,46 @@ def http_post(port: int, path: str, body: dict, token: str,
         return 0, f"{type(e).__name__}: {e}"
 
 
+# --- control-plane websocket --------------------------------------------------
+def watch_events(token: str, seconds: float) -> None:
+    """Open the plaintext control websocket and stream events. Auth is the WS
+    subprotocol: `Sec-WebSocket-Protocol: v1.hc.vivo.com.cn, <token>`."""
+    try:
+        import websockets
+    except ImportError:
+        print("[watch] `websockets` not installed — `pip install websockets`.")
+        return
+
+    async def run() -> None:
+        url = f"ws://127.0.0.1:{PORT_HTTP}{WS_PATH}"
+        try:
+            async with websockets.connect(
+                url, subprotocols=[WS_SUBPROTO, token], origin="file://",
+                open_timeout=6,
+            ) as ws:
+                print(f"[watch] ✅ control ws open — streaming {int(seconds)}s of "
+                      "events (Ctrl-C to stop):")
+                end = time.time() + seconds
+                while time.time() < end:
+                    try:
+                        m = await asyncio.wait_for(ws.recv(), timeout=4)
+                    except asyncio.TimeoutError:
+                        continue
+                    if isinstance(m, (bytes, bytearray)):
+                        m = m.decode("utf-8", "replace")
+                    print(f"   [event] {m[:400]}")
+        except Exception as e:  # noqa: BLE001
+            print(f"[watch] ws error: {type(e).__name__}: {str(e)[:160]}")
+
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        pass
+
+
 # --- the connect sequence -----------------------------------------------------
-def connect(serial: str, hostname: str, dry_run: bool = False) -> None:
+def connect(serial: str, hostname: str, dry_run: bool = False,
+            watch_seconds: float = 0.0) -> None:
     openid, acct = load_account()
     token = secrets.token_hex(32)                 # <-- our OWN minted token
     conn_id = f"{secrets.token_hex(2)}_{now_ms()}"
@@ -307,6 +348,8 @@ def connect(serial: str, hostname: str, dry_run: bool = False) -> None:
             {"connectionId": conn_id, "base_info_status": st2,
              "base_info": body2[:4000]}, indent=2))
         print(f"[connect] saved captures/auth/connect-proof.json")
+        if watch_seconds:
+            watch_events(token, watch_seconds)
     else:
         print(f"[connect] ⚠ /base-info did not return code 0000 (HTTP {st2}). "
               "Known blocker: the reverse channels (8904/5679) need a real "
@@ -324,9 +367,11 @@ def main() -> None:
     ap.add_argument("--pc-name", default="vivo-linkkit", help="pc_name to present")
     ap.add_argument("--dry-run", action="store_true",
                     help="print what would run without touching the device")
+    ap.add_argument("--watch", type=float, default=0.0, metavar="SECONDS",
+                    help="after connecting, stream control-plane ws events for N s")
     args = ap.parse_args()
     serial = pick_device(args.serial) if not args.dry_run else (args.serial or "?")
-    connect(serial, args.pc_name, dry_run=args.dry_run)
+    connect(serial, args.pc_name, dry_run=args.dry_run, watch_seconds=args.watch)
 
 
 if __name__ == "__main__":

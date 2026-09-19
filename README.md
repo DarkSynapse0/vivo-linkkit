@@ -56,8 +56,15 @@ requirement: the PC must hold reverse listeners on `5679`/`8904` open, then
 `adb forward 10380` and `POST /base-info` first. This confirms the whole thesis:
 a distributable, secret-free, cloud-free client is possible.
 
-**Next:** read the `:10381` TLS media/control stream (screen mirror §5, file
-transfer) — the real feature work. Full detail in
+The **control plane is plaintext** and already readable with our token:
+`connect_usb.py --watch` opens `ws://<phone>:10380/ws/heart-beat` (auth = the WS
+subprotocol `v1.hc.vivo.com.cn, <token>`) and streams events —
+`UPDATE_DEVICE_INFO:{…}`, `RE_CONNECT_ALBUM:{…}`, `{"state":"normal"}`. So file
+listing, input, and notifications ride this clear channel; only the video/bulk
+media needs the `:10381` TLS.
+
+**Next:** map the control-plane event/command vocabulary (drive a file listing),
+then read the `:10381` TLS for screen mirror (§5). Full detail in
 [`protocol/PROTOCOL.md`](protocol/PROTOCOL.md).
 
 ## Quick start
