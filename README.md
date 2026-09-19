@@ -16,27 +16,37 @@ reimplementing it, scrcpy-style. No vendor binaries.
 
 ## Status
 
-🟢 **Phase 1 complete — protocol mapped.** The pivotal question is **answered**
-(triple-confirmed by the phone APK, the PC client JS, and the phone's own UI):
-pairing is **vivo-account based** — the PC and phone sign into the *same* account
-and the cloud links them into "Connection center"; a per-session connect then runs
-over the LAN (**QR / verify-code / handshake**). So the tool is **distributable**
-by driving the user's *own* login — no embedded secrets, no bypass.
+🟢 **Phase 1 complete + Phase 2 account-auth working; into Phase 3 (device
+protocol decoded).** The pivotal question is **answered**: pairing is
+**vivo-account based** — no embedded secret — so the tool is **distributable** by
+driving the user's *own* login.
 
-The official Windows client is **Electron**, so the protocol was read from
-plaintext JS on Linux — **no VM, no Frida**. What's understood end-to-end:
+The protocol was first read from the Electron client's plaintext JS, then
+**live-verified** in a Windows 11 instrumentation VM (QEMU/KVM) with mitmproxy
+(cloud/account traffic) and usbmon (the USB pipe) — **no Frida**. Live capture
+also *corrected* several decompile-era guesses. What's now evidence-verified:
 
-- **Transport:** `wss://<host>:<port>` (TLS) carrying JSON (`MESSAGE_EVENT_TYPE` /
-  `CONNECT_ROUTER`).
-- **Session crypto:** **AES-256-CBC** — the PC generates the key+iv and sends them
-  to the phone (nothing to derive).
-- **Mirroring:** H.264/H.265 via bundled FFmpeg.
-- **Discovery:** QR (cloud-mediated) + USB + Wi-Fi-Direct/LAN.
+- **Account auth (P2 — working in our client):** passport web login → the
+  `getHtml` hidden input carries the token inline (positional `&`-fields;
+  field[1] = token). Authenticated gateway calls send **`openId` + `token`**
+  headers (no exchange call, no signature). `getUserInfo` returns 200. See
+  `src/vivolinkkit/login.py`.
+- **Rendezvous:** cloud `scan/sid` → `getPhone` returns the phone's
+  `ip`/`connectionId`/`bleId`.
+- **USB transport = ADB:** the PC injects the connect token via
+  `am startservice … com.vivo.pcsuite/.service.AdbPortalService --es token`, then
+  `adb forward tcp:10380/10381` + `adb reverse tcp:5679/8904`.
+- **Device control:** plaintext **HTTP** to the phone's **`PcSuite-HTTP`** server
+  on `:10380`, authed with the **`newToken`** header (`POST /version` →
+  `{"code":"0000",…}`).
+- **Media:** **TLS 1.2** on `:10381` (self-signed `CN=vivo` cert); H.264/H.265
+  video rides inside it.
 
-**Next (Phase 2):** drive the vivo account login to obtain the session token, then
-a minimal Python client (discover → connect → first frame). Remaining unknowns are
-byte-level (exact verify-code check, wire framing). Full detail in
-[`protocol/PROTOCOL.md`](protocol/PROTOCOL.md). No client code yet.
+**Next (Phase 3):** determine whether `newToken` is PC-minted (⇒ a fully
+cloud-free USB path, KDE-Connect-style local trust) or cloud-issued; decrypt the
+`:10381` TLS to read the wire framing/video; then a minimal Python client
+(adb-forward → `POST /version` → connect). Full detail, with the corrected
+findings, in [`protocol/PROTOCOL.md`](protocol/PROTOCOL.md).
 
 ## Quick start
 
@@ -45,20 +55,29 @@ scripts/bootstrap.sh          # install host deps, create the venv
 recon/01_inventory.sh         # device identity + candidate packages + open ports
 recon/02_decompile.sh <pkg>   # pull & decompile the phone agent, grep for signals
 recon/03_capture.sh           # usbmon / network / port-sweep captures
+
+# Account login (P2) — drive your OWN vivo login, verify the gateway token:
+PYTHONPATH=src .venv/bin/python -m vivolinkkit.login --region in
+
+# Live instrumentation VM (to observe the official client & the USB pipe):
+sudo bash scripts/vm/00_host_prereqs.sh    # libvirt + NAT (once; then re-login)
+bash scripts/vm/10_create_vm.sh            # Win11 guest (UEFI+TPM, USB passthrough)
+sudo bash scripts/vm/31_capture_usb.sh     # capture the phone<->PC USB (ADB) pipe
 ```
 
-Then start filling in `protocol/PROTOCOL.md`.
+See [`scripts/vm/README.md`](scripts/vm/README.md) for the mitmproxy + USB
+capture workflow, and keep filling in `protocol/PROTOCOL.md`.
 
 ## Roadmap
 
-| Phase | Goal | Est. |
+| Phase | Goal | Status |
 |------|------|------|
-| **P0** Recon & setup | Real data on the wire, not guesses | days |
-| **P1** Protocol map | Answer the pairing question; fill `PROTOCOL.md` | 1–2 wks |
-| **P2** Exploration client | Pair + write one decodable H.264 frame to disk | 2–4 wks |
-| **P3** Real client | Smooth mirroring + input control (Rust/Go) | 1–2 mo |
-| **P4** Services | File transfer, clipboard, notifications | ongoing |
-| **P5** Packaging | PKGBUILD → AUR; broaden device support | ongoing |
+| **P0** Recon & setup | Real data on the wire, not guesses | ✅ done |
+| **P1** Protocol map | Answer the pairing question; fill `PROTOCOL.md` | ✅ done |
+| **P2** Exploration client | Account login + token verified (200); pipe decoded | 🟡 in progress |
+| **P3** Real client | Smooth mirroring + input control (Rust/Go) | ⬜ next |
+| **P4** Services | File transfer, clipboard, notifications | ⬜ |
+| **P5** Packaging | PKGBUILD → AUR; broaden device support | ⬜ |
 
 See the full [roadmap PDF](vivo-linkkit-ROADMAP.pdf) for detail.
 
