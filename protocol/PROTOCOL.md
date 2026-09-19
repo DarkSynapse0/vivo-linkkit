@@ -165,7 +165,22 @@ Multiple connect modes (from `app-connection.js` / `components-connection.js`):
   4. Phone scans → resolves `sid` via cloud → learns PC IP + token → connects
      directly (§2/§5).
   → **QR pairing depends on vivo cloud + account reachability.**
-- **USB** — `/connect?active=usb` (direct, no cloud). **Preferred first target.**
+- **USB** — was assumed `/connect?active=usb` (direct, no cloud). **DISPROVEN by
+  live capture (2026-09-19):** with the phone on USB, Office Kit still ran the
+  **cloud rendezvous** `GET /vbusiness/scan/sid` → `POST /vbusiness/scan/getPhone`
+  and the phone returned its **Wi-Fi LAN IP** as the data endpoint. So the USB
+  cable triggers discovery, but the session rides the LAN, cloud-signalled — a
+  fully offline USB path was **not** observed in pcsuite 6.8.2.
+- **`getPhone` response (VERIFIED):** `data` is a JSON *string* →
+  ```json
+  {"deviceType":"phone","bleId":"<6-digit>","openId":"<64-hex device openId>",
+   "ip":["<phone-LAN-ip>",""],"connectionId":"<epoch-scoped id>",
+   "userName":"<masked phone>","deviceName":"vivo X200T"}
+  ```
+  i.e. the client learns the phone's **IP + `connectionId` + device `openId` +
+  `bleId`**, then opens the direct pipe to `ip` (§2). `scan/sid` first returns
+  `{sid,timeout:180000}`; the client POSTs that `sid` to `getPhone` (polls until
+  the phone appears, then 200).
 - **Wi-Fi Direct / local** — `startWifiDirect()`, `startLocalNetworkScan()` +
   BLE (`start_ble_scan()`), proximity `NEARBY`/`FARAWAY`/`BOTH`; `localIpArr` can
   ride in `codeInfo` — a more LAN-direct path.
@@ -338,9 +353,15 @@ phone-connected capture.
   (§8). No exchange call, no `newToken`, no signature. No embedded secret.
 
 ## Open questions (remaining — need a live capture / build-and-observe)
-- Can a **USB or Wi-Fi-Direct connect fully avoid the vivo cloud** (`/scan/*`)?
-  This decides how self-contained a distributable client can be. **Key strategic
-  question for P2.**
+- Can a connect **fully avoid the vivo cloud** (`/scan/*`)? **Partially answered
+  (2026-09-19):** the **USB** connect does **NOT** avoid it — it runs the
+  `scan/sid`+`getPhone` cloud rendezvous, then rides the phone's LAN IP (§1).
+  **Still open:** does **Wi-Fi-Direct / local + BLE** (`startWifiDirect` /
+  `startLocalNetworkScan`) reach the phone without `/scan/*`? That's now the
+  decisive distributability question — capture a Wi-Fi-Direct connect next.
+- Capture the **actual device pipe** to the phone's LAN IP (wss, §2/§3) — it
+  bypasses the HTTP proxy, so use a network capture (tshark on `virbr0`/`vnet0`),
+  not mitmproxy. This is the P3 gateway (framing, `connectionId`/`openId` use).
 - Exact **verify-code** check (who computes/compares it, digits, where shown).
 - ~~`getTokenByVivoTokenAndOpenid` request body~~ — RESOLVED: not used in the web
   flow (§8). Still open: does the **device-connect** gateway (`pcsuite-api`) sign
