@@ -1,7 +1,8 @@
 """vivo-linkkit — clean-room interoperability client for vivo Office Kit.
 
-Prototype stage (P2). Everything here is implemented from the documented
+A cloud-free, secret-free client that connects to a vivo phone over USB and
+lists/downloads files. Everything here is implemented from the documented
 protocol in ``protocol/PROTOCOL.md``, never transliterated from decompiled code.
 """
 
-__version__ = "0.0.0"
+__version__ = "0.1.0"

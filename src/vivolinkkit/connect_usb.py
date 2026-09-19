@@ -71,11 +71,13 @@ FM_CHANNEL = "/pc_file_manager/channel"
 FM_DOWNLOAD = "/download/down_files"   # GET ?path=&srctype=<mime>&newToken=
 FM_THUMB = "/pc_file_manager/thumb"    # GET ?fileUri=<savePath>&width=&height=
 DL_DIR = REPO_ROOT / "captures" / "downloads"   # gitignored
-FM_TYPES = {  # friendly name -> vivo REQUEST_POSTS_* constant (sortCondition/groupBy)
-    "home": ("REQUEST_POSTS_HOMEDATA", 0, 0), "images": ("REQUEST_POSTS_IMAGELIST", 9, 1),
-    "videos": ("REQUEST_POSTS_VIDEOLIST", 5, 1), "audio": ("REQUEST_POSTS_AUDIOLIST", 5, 0),
-    "docs": ("REQUEST_POSTS_DOCSLIST", 5, 0), "webdocs": ("REQUEST_POSTS_WEB_DOCSLIST", 5, 5),
-    "files": ("REQUEST_POSTS_FILELIST", 5, 0),
+FM_TYPES = {  # friendly name -> vivo REQUEST_POSTS_* constant (sortCondition, groupBy)
+    "home":   ("REQUEST_POSTS_HOMEDATA", 0, 0),
+    "images": ("REQUEST_POSTS_IMAGELIST", 9, 1),
+    "videos": ("REQUEST_POSTS_VIDEOLIST", 5, 1),
+    "audio":  ("REQUEST_POSTS_AUDIOLIST", 5, 0),
+    "docs":   ("REQUEST_POSTS_WEB_DOCSLIST", 5, 5),  # WEB_DOCSLIST has the real docs;
+    "files":  ("REQUEST_POSTS_FILELIST", 5, 0),      #   plain DOCSLIST is empty on-device.
 }
 APP_VERSION = "6.8.2"
 CONN_BASE_VERSION_CODE = 1155
@@ -480,7 +482,10 @@ def connect(serial: str, hostname: str, dry_run: bool = False,
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="P3: cloud-free USB /base-info PoC")
+    ap = argparse.ArgumentParser(
+        prog="vivolinkkit connect",
+        description="Connect to a vivo phone over USB (cloud-free, self-minted "
+                    "token) and browse / download / preview its files.")
     ap.add_argument("--serial", help="adb serial (if multiple devices)")
     ap.add_argument("--pc-name", default="vivo-linkkit", help="pc_name to present")
     ap.add_argument("--dry-run", action="store_true",

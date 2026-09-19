@@ -29,11 +29,7 @@ Requires Playwright:
 from __future__ import annotations
 
 import argparse
-import base64
-import hashlib
-import hmac
 import json
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -87,19 +83,7 @@ PCSUITE_UA = ("Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) pcsuite/6.8.2 Chrome/108.0.5359.62 "
               "Electron/22.0.0 Safari/537.36")
 
-# Every gateway request carries the client's "Cy" auth headers (getCyHeaders in
-# the client JS). The signature is base64(HMAC-SHA256) with the timestamp string
-# as the KEY and this constant as the MESSAGE (createRequestSign(msg, key)).
-CONNECT_NAME = "com.vivo.pcsuite.connect"
 APP_VERSION = "6.8.2"
-SYSTEM_VERSION = "10"
-
-
-def request_sign(timestamp_ms: int) -> str:
-    """base64(HMAC-SHA256(key=timestamp_str, msg=CONNECT_NAME)) — matches the JS."""
-    digest = hmac.new(str(timestamp_ms).encode(), CONNECT_NAME.encode(),
-                      hashlib.sha256).digest()
-    return base64.b64encode(digest).decode()
 
 
 def get_device_id() -> str:
@@ -111,22 +95,6 @@ def get_device_id() -> str:
     did = uuid.uuid4().hex
     p.write_text(did)
     return did
-
-
-def cy_headers(openid: str, token: str = "") -> dict:
-    """Replicate getCyHeaders() from the client (source=3 → Windows)."""
-    ts = int(time.time() * 1000)
-    return {
-        "openId": openid,
-        "token": token,
-        "source": "3",
-        "timestamp": str(ts),
-        "sign": request_sign(ts),
-        "deviceId": get_device_id(),
-        "model": "win",
-        "systemVersion": SYSTEM_VERSION,
-        "appVersion": APP_VERSION,
-    }
 
 
 def build_login_url(account_host: str, client_id: str, redirect_uri: str,
@@ -322,10 +290,9 @@ def find_vivo_token(creds: dict) -> str:
 
 
 # NOTE: the decompiled `getTokenByVivoTokenAndOpenid` exchange is NOT part of the
-# observed global web-login flow (0 calls in the 2026-09-19 capture; the token is
-# delivered inline via getHtml). `request_sign`/`cy_headers` are retained for the
-# device-connect gateway (pcsuite-api), whose signed calls we verify once the
-# phone is passed through — do not resurrect a token-exchange POST here.
+# real web-login flow — the token is delivered inline via getHtml (verified live).
+# Don't resurrect a token-exchange POST. The device pipe (connect_usb.py) auths
+# with that same token as a `newToken` header, not a request signature.
 
 
 def main() -> None:

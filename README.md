@@ -21,7 +21,7 @@ downloads, and previews files** — clean-room, no vivo cloud call, no vendor
 secret, no on-screen confirmation:
 
 ```console
-$ python -m vivolinkkit.connect_usb --list images,videos --grab images:2 --thumbs images:5
+$ vivolinkkit connect --list images,videos --grab images:2 --thumbs images:5
 [connect] ✅ phone accepted our self-minted token — cloud-free USB connect works
 [files:images]  200 files: Screenshot_2026_0918_230722.png, IMG_20260918_201539.jpg, …
 [files:videos]   64 files: video_20260911_164804.mp4 (169 MB), …
@@ -34,7 +34,18 @@ $ python -m vivolinkkit.connect_usb --list images,videos --grab images:2 --thumb
 (`crypto.randomBytes(32)`) and hands it to the phone; the phone accepts it because
 the account `openid` proves the two are the *same vivo account*. No embedded
 credential, no cloud token issuance. So a fully **distributable, secret-free,
-cloud-free** client is possible — and proven.
+cloud-free** client is possible.
+
+### Scope, stated honestly
+
+`vivo-linkkit` is a **file extractor**, not a full Office Kit replacement. It
+talks *directly* to the phone's token-authenticated file API and pulls **genuine
+files** (byte-exact, openable, carrying the phone's own EXIF — verified on real
+hardware). But on the phone's Office Kit "connect" screen, only the heartbeat
+**link** shows ✓; screen mirror, file transfer, clipboard, and notifications show
+✗, because we don't establish those full feature *sessions*. So: the data you
+pull is real, and the phone marks the features as not-connected — both are true.
+The heavy features are the [native tier](#two-tiers--whats-done-whats-native).
 
 ## How it works
 
@@ -58,7 +69,7 @@ evidence-verified and reimplemented:
    (a *random* `pcDeviceId` works — device identity isn't checked).
 4. **Control plane.** A plaintext WebSocket `ws://<phone>:10380/ws/heart-beat`
    (auth is the WS subprotocol `v1.hc.vivo.com.cn, <token>`) streams events
-   (`UPDATE_DEVICE_INFO`, `RE_CONNECT_ALBUM`, heartbeats) — `connect_usb.py --watch`.
+   (`UPDATE_DEVICE_INFO`, `RE_CONNECT_ALBUM`, heartbeats) — `vivolinkkit connect --watch`.
 5. **File services** over TLS on `:10380` (the port sniffs the first byte:
    `0x16`→TLS, else plaintext): `POST /pc_file_manager/channel` (list, body `type`
    = `REQUEST_POSTS_IMAGELIST|VIDEOLIST|…`), `GET /download/down_files?path=…`
@@ -86,32 +97,34 @@ reversing, not JS-grepping).
 
 ## Quick start
 
-Requirements: Linux + `adb`, a vivo phone with USB debugging enabled, and Python
-(a venv is created by the bootstrap script).
+Requirements: Linux, `adb`, and a vivo phone with **USB debugging** enabled.
 
 ```sh
-scripts/bootstrap.sh                       # host deps + venv
+python -m venv .venv && . .venv/bin/activate
+pip install -e '.[login]'      # core client + playwright (for login)
+playwright install chromium    # one-time, for the login browser
 ```
 
-**1 — log into your own vivo account** (one-time, to obtain the account `openid`;
-opens a real browser, drives *your* login, stores nothing but the token locally):
+**1 — log into your own vivo account** (one-time; opens a real browser, drives
+*your* login, and stores only the resulting token locally under `captures/`):
 
 ```sh
-PYTHONPATH=src .venv/bin/python -m vivolinkkit.login --region in
+vivolinkkit login --region in           # in | asia | cn | eu | ru
 ```
 
-**2 — plug the phone in (USB debugging authorized) and use it:**
+**2 — plug the phone in (authorize the USB-debugging prompt) and use it:**
 
 ```sh
-PYTHONPATH=src .venv/bin/python -m vivolinkkit.connect_usb \
-    --list images,videos,docs \      # browse the phone
-    --grab images:3,videos:1 \       # download → captures/downloads/
-    --thumbs images:5 \              # preview thumbnails
-    --watch 10                       # stream control-plane events
+vivolinkkit connect \
+    --list images,videos,docs \   # browse the phone
+    --grab images:3,videos:1 \    # download → captures/downloads/
+    --thumbs images:5 \           # 144×144 preview PNGs
+    --watch 10                    # stream live control-plane events
 ```
 
 File kinds: `images videos audio docs webdocs files home`. Downloads and
-thumbnails land in `captures/downloads/` (gitignored).
+thumbnails land in `captures/downloads/` (gitignored). Run `vivolinkkit connect
+--help` for all options.
 
 ### Instrumentation (for extending the protocol)
 
@@ -130,6 +143,7 @@ See [`scripts/vm/README.md`](scripts/vm/README.md) for the mitmproxy + usbmon +
 ## Layout
 
 ```
+src/vivolinkkit/cli.py           the `vivolinkkit` command (login | connect)
 src/vivolinkkit/login.py         drive the user's vivo login → account token
 src/vivolinkkit/connect_usb.py   cloud-free USB connect + file list/download/thumbs
 protocol/PROTOCOL.md             the living spec (the heart of the project)
@@ -147,9 +161,18 @@ captures/                        gitignored — raw dumps, decompiled output, se
 | **P2** Auth & connect | Account login + cloud-free USB connect (`code 0000`) | ✅ done |
 | **P3** File client | List + download + thumbnails, working & clean-room | ✅ done |
 | **P4** Native tier | Upload (VDFS), clipboard/notifications, screen mirror (Frida) | ⬜ next |
-| **P5** Packaging | CLI polish, PKGBUILD → AUR, broaden device support | ⬜ |
+| **P5** Packaging | `vivolinkkit` CLI ✓; next: PKGBUILD → AUR, more devices | 🟡 started |
 
 See the full [roadmap PDF](vivo-linkkit-ROADMAP.pdf) for detail.
+
+## Contributing
+
+The protocol map in [`protocol/PROTOCOL.md`](protocol/PROTOCOL.md) is the heart of
+the project — published early on purpose, to recruit collaborators. The most
+valuable next work is the **native tier** (screen mirror, VDFS upload, clipboard):
+see §6 for the Frida approach. Please keep the [clean-room
+discipline](#interoperability-statement) — implement from the spec, never from
+transliterated decompiled code.
 
 ## Interoperability statement
 
@@ -173,4 +196,5 @@ We keep it clean:
 
 ## License
 
-TBD (a permissive license such as Apache-2.0 or MIT is anticipated).
+[Apache-2.0](LICENSE). This covers only this project's own source; it does **not**
+grant any rights to vivo's software, which is neither included nor redistributed.

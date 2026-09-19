@@ -1,9 +1,11 @@
-# vivo-linkkit — exploration dependencies (P1–P2)
-# System tools (jadx, 7z, tshark) are installed via scripts/bootstrap.sh.
+# vivo-linkkit dependencies.  Prefer installing the package:
+#   pip install -e .            # core client  (websockets)
+#   pip install -e '.[login]'   # + playwright, for `vivolinkkit login`
+# System tools (adb, jadx, 7z, tshark) come from scripts/bootstrap.sh.
 
-websockets         # the phone link is wss://<ip>:<port> JSON (PROTOCOL.md §2/§3)
-cryptography       # aes-256-cbc session cipher + key/iv derivation (§4)
-requests           # the phone's HTTP file APIs (§2)
-qrcode             # generate/parse the pairing QR payload (§1/§5)
-playwright         # drive the user's vivo passport login in a browser (§8, login.py)
+websockets>=12     # control-plane websocket to the phone (PROTOCOL.md §1)
+playwright>=1.40   # `vivolinkkit login` — drives your own vivo passport login
                    #   after install:  playwright install chromium
+
+# Instrumentation only (observing the official client — see scripts/vm/):
+mitmproxy          # decrypt the account/cloud + phone TLS while capturing
