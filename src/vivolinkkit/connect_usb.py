@@ -69,6 +69,7 @@ WS_SUBPROTO = "v1.hc.vivo.com.cn"  # 1st WS subprotocol; the token is the 2nd
 # sniffs the first byte: 0x16 -> TLS). Body needs the `type` constant below.
 FM_CHANNEL = "/pc_file_manager/channel"
 FM_DOWNLOAD = "/download/down_files"   # GET ?path=&srctype=<mime>&newToken=
+FM_THUMB = "/pc_file_manager/thumb"    # GET ?fileUri=<savePath>&width=&height=
 DL_DIR = REPO_ROOT / "captures" / "downloads"   # gitignored
 FM_TYPES = {  # friendly name -> vivo REQUEST_POSTS_* constant (sortCondition/groupBy)
     "home": ("REQUEST_POSTS_HOMEDATA", 0, 0), "images": ("REQUEST_POSTS_IMAGELIST", 9, 1),
@@ -291,6 +292,25 @@ def tls_get(port: int, path: str, timeout: float = 30.0) -> tuple[int, bytes]:
         return 0, str(e).encode()
 
 
+def grab_thumbs(token: str, kind: str, count: int) -> None:
+    """Fetch thumbnails for the first `count` files of a category (previews)."""
+    import urllib.parse
+    st, files = fm_list(token, kind)
+    if st != 200 or not files:
+        print(f"\n[thumbs:{kind}] list failed (HTTP {st})"); return
+    out_dir = DL_DIR / "thumbs"; out_dir.mkdir(parents=True, exist_ok=True)
+    print(f"\n[thumbs:{kind}] fetching {min(count, len(files))} thumbnails → {out_dir}")
+    for name, _size, save_path in files[:count]:
+        q = urllib.parse.urlencode({"fileUri": save_path, "width": 160, "height": 160})
+        gst, data = tls_get(PORT_HTTP, f"{FM_THUMB}?{q}")
+        if gst == 200 and data[:3] in (b'\xff\xd8\xff', b'\x89PN'):
+            ext = "jpg" if data[:3] == b'\xff\xd8\xff' else "png"
+            (out_dir / f"{name}.thumb.{ext}").write_bytes(data)
+            print(f"   {len(data):>7,}  {name}.thumb.{ext}  ✓")
+        else:
+            print(f"   FAILED {name}  HTTP {gst} ({len(data)}B)")
+
+
 def grab_files(token: str, kind: str, count: int) -> None:
     """List a category and download the first `count` files to captures/downloads/."""
     st, files = fm_list(token, kind)
@@ -351,7 +371,8 @@ def watch_events(token: str, seconds: float) -> None:
 # --- the connect sequence -----------------------------------------------------
 def connect(serial: str, hostname: str, dry_run: bool = False,
             watch_seconds: float = 0.0, list_kinds: list[str] | None = None,
-            grab: list[tuple[str, int]] | None = None) -> None:
+            grab: list[tuple[str, int]] | None = None,
+            thumbs: list[tuple[str, int]] | None = None) -> None:
     openid, acct = load_account()
     token = secrets.token_hex(32)                 # <-- our OWN minted token
     conn_id = f"{secrets.token_hex(2)}_{now_ms()}"
@@ -443,6 +464,8 @@ def connect(serial: str, hostname: str, dry_run: bool = False,
             list_files(token, kind)
         for kind, n in (grab or []):
             grab_files(token, kind, n)
+        for kind, n in (thumbs or []):
+            grab_thumbs(token, kind, n)
         if watch_seconds:
             watch_events(token, watch_seconds)
     else:
@@ -469,20 +492,28 @@ def main() -> None:
     ap.add_argument("--grab", default="", metavar="KIND:N",
                     help="download the first N files of a KIND to captures/downloads/ "
                          "(e.g. images:2,videos:1)")
+    ap.add_argument("--thumbs", default="", metavar="KIND:N",
+                    help="fetch thumbnails for the first N files of a KIND")
     args = ap.parse_args()
     kinds = [k.strip() for k in args.list.split(",") if k.strip()]
     bad = [k for k in kinds if k not in FM_TYPES]
     if bad:
         raise SystemExit(f"[connect] unknown --list kinds {bad}; choose from {list(FM_TYPES)}")
-    grab = []
-    for spec in (s.strip() for s in args.grab.split(",") if s.strip()):
-        kind, _, n = spec.partition(":")
-        if kind not in FM_TYPES:
-            raise SystemExit(f"[connect] unknown --grab kind {kind!r}; choose from {list(FM_TYPES)}")
-        grab.append((kind, int(n or "1")))
+
+    def _pairs(spec, flag):
+        out = []
+        for s in (x.strip() for x in spec.split(",") if x.strip()):
+            kind, _, n = s.partition(":")
+            if kind not in FM_TYPES:
+                raise SystemExit(f"[connect] unknown --{flag} kind {kind!r}; choose from {list(FM_TYPES)}")
+            out.append((kind, int(n or "1")))
+        return out
+
+    grab = _pairs(args.grab, "grab")
+    thumbs = _pairs(args.thumbs, "thumbs")
     serial = pick_device(args.serial) if not args.dry_run else (args.serial or "?")
     connect(serial, args.pc_name, dry_run=args.dry_run, watch_seconds=args.watch,
-            list_kinds=kinds, grab=grab)
+            list_kinds=kinds, grab=grab, thumbs=thumbs)
 
 
 if __name__ == "__main__":

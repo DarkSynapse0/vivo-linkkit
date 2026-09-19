@@ -255,6 +255,12 @@ Multiple connect modes (from `app-connection.js` / `components-connection.js`):
   - **File DOWNLOAD also works (VERIFIED):** `GET {base}/download/down_files?
     path=<savePath>&srctype=<mimeType>&newToken=<token>` on `:10380` (TLS) streams
     the raw file. Confirmed exact byte-for-byte for PNG/JPEG/MP4 off the phone.
+  - **Thumbnails (VERIFIED):** `GET /pc_file_manager/thumb?fileUri=<savePath>&
+    width=160&height=160` → a 144×144 PNG preview. (`connect_usb.py --thumbs`.)
+  - **Clipboard + notifications are NATIVE, not this layer** (2026-09-19): almost
+    nothing in the JS; handled by `native/SyncService/vivoSyncService.exe` (MQTT
+    `paho-mqtt` + protobuf + `VPushSdk`). Like the mirror (§6), a native
+    sub-project — not the JSON/HTTP services here.
     Other fm endpoints: `/tab_count?type=N`, `/get_path`, `/download` +
     `/download_info`, `/thumb?fileUri=…&width=…`, `/query_directory_size`,
     `/recycle_operation`, `/trans_open_file`, `/drop_files_info`. Driven by

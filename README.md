@@ -75,9 +75,11 @@ $ python -m vivolinkkit.connect_usb --list images,videos
 [files:videos] …  64 files: video_20260911_164804.mp4 (169 MB), …
 ```
 
-**File download works too** — `connect_usb.py --grab images:3,videos:1` pulls the
-real files to `captures/downloads/` (verified byte-exact PNG/JPEG/MP4) via
-`GET /download/down_files?path=…&srctype=…&newToken=…`. The listing API is
+**File download + thumbnails work too** — `connect_usb.py --grab images:3,videos:1`
+pulls real files to `captures/downloads/` (verified byte-exact PNG/JPEG/MP4) via
+`GET /download/down_files?path=…`, and `--thumbs images:5` fetches 144×144 preview
+PNGs. (Clipboard + notifications, like screen mirror, turned out to be native —
+`vivoSyncService.exe`, MQTT+protobuf — so they're separate native sub-projects.) The listing API is
 `POST /pc_file_manager/channel` over TLS (`:10380` sniffs the first byte:
 `0x16`→TLS); the body's `type` field (`REQUEST_POSTS_IMAGELIST`, etc.) was the
 last missing piece. Decryption used `SSLKEYLOGFILE` + a usbmon capture +
