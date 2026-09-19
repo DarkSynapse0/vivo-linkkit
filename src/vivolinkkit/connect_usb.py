@@ -39,9 +39,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import http.client
 import json
 import secrets
 import socket
+import ssl
 import subprocess
 import threading
 import time
@@ -62,6 +64,16 @@ PORT_TLS = 10381           # phone's TLS server (media/data)
 REVERSE_PORTS = [5679, 8904]   # phone→PC channels
 WS_PATH = "/ws/heart-beat"     # control-plane websocket (plaintext, on PORT_HTTP)
 WS_SUBPROTO = "v1.hc.vivo.com.cn"  # 1st WS subprotocol; the token is the 2nd
+
+# File manager: POST /pc_file_manager/channel over TLS on PORT_HTTP (the port
+# sniffs the first byte: 0x16 -> TLS). Body needs the `type` constant below.
+FM_CHANNEL = "/pc_file_manager/channel"
+FM_TYPES = {  # friendly name -> vivo REQUEST_POSTS_* constant (sortCondition/groupBy)
+    "home": ("REQUEST_POSTS_HOMEDATA", 0, 0), "images": ("REQUEST_POSTS_IMAGELIST", 9, 1),
+    "videos": ("REQUEST_POSTS_VIDEOLIST", 5, 1), "audio": ("REQUEST_POSTS_AUDIOLIST", 5, 0),
+    "docs": ("REQUEST_POSTS_DOCSLIST", 5, 0), "webdocs": ("REQUEST_POSTS_WEB_DOCSLIST", 5, 5),
+    "files": ("REQUEST_POSTS_FILELIST", 5, 0),
+}
 APP_VERSION = "6.8.2"
 CONN_BASE_VERSION_CODE = 1155
 PCSUITE_VERSION_CODE = 65011
@@ -221,6 +233,44 @@ def http_post(port: int, path: str, body: dict, token: str,
         return 0, f"{type(e).__name__}: {e}"
 
 
+# --- file manager (TLS on PORT_HTTP) ------------------------------------------
+def tls_post(port: int, path: str, body: dict, token: str,
+             timeout: float = 12.0) -> tuple[int, str]:
+    """POST JSON over TLS to the phone (self-signed cert, ignored — the official
+    client uses rejectUnauthorized:false)."""
+    ctx = ssl._create_unverified_context()
+    try:
+        c = http.client.HTTPSConnection("127.0.0.1", port, timeout=timeout,
+                                        context=ctx)
+        c.request("POST", path, body=json.dumps(body).encode(),
+                  headers={"Content-Type": "application/json", "newToken": token})
+        r = c.getresponse()
+        data = r.read().decode("utf-8", "replace")
+        c.close()
+        return r.status, data
+    except Exception as e:  # noqa: BLE001
+        return 0, f"{type(e).__name__}: {e}"
+
+
+def list_files(token: str, kind: str) -> None:
+    typ, sort, group = FM_TYPES[kind]
+    body = {"category": "", "data": "", "fileCount": 0, "sortCondition": sort,
+            "groupBy": group, "type": typ, "pageIndex": 0, "pageNumber": 200,
+            "firstFlag": False}
+    st, data = tls_post(PORT_HTTP, FM_CHANNEL, body, token)
+    print(f"\n[files:{kind}] POST {FM_CHANNEL} type={typ} → HTTP {st}")
+    if st != 200:
+        print(f"   {data[:200]}"); return
+    import re
+    names = re.findall(r'"fileName":"([^"]+)"', data)
+    sizes = re.findall(r'"fileSize":(\d+)', data)
+    print(f"   {len(names)} files ({len(data)} bytes):")
+    for n, s in list(zip(names, sizes))[:20]:
+        print(f"     {int(s):>12,}  {n}")
+    if len(names) > 20:
+        print(f"     … and {len(names) - 20} more")
+
+
 # --- control-plane websocket --------------------------------------------------
 def watch_events(token: str, seconds: float) -> None:
     """Open the plaintext control websocket and stream events. Auth is the WS
@@ -260,7 +310,7 @@ def watch_events(token: str, seconds: float) -> None:
 
 # --- the connect sequence -----------------------------------------------------
 def connect(serial: str, hostname: str, dry_run: bool = False,
-            watch_seconds: float = 0.0) -> None:
+            watch_seconds: float = 0.0, list_kinds: list[str] | None = None) -> None:
     openid, acct = load_account()
     token = secrets.token_hex(32)                 # <-- our OWN minted token
     conn_id = f"{secrets.token_hex(2)}_{now_ms()}"
@@ -348,6 +398,8 @@ def connect(serial: str, hostname: str, dry_run: bool = False,
             {"connectionId": conn_id, "base_info_status": st2,
              "base_info": body2[:4000]}, indent=2))
         print(f"[connect] saved captures/auth/connect-proof.json")
+        for kind in (list_kinds or []):
+            list_files(token, kind)
         if watch_seconds:
             watch_events(token, watch_seconds)
     else:
@@ -369,9 +421,16 @@ def main() -> None:
                     help="print what would run without touching the device")
     ap.add_argument("--watch", type=float, default=0.0, metavar="SECONDS",
                     help="after connecting, stream control-plane ws events for N s")
+    ap.add_argument("--list", default="", metavar="KINDS",
+                    help=f"comma-separated file lists to fetch: {','.join(FM_TYPES)}")
     args = ap.parse_args()
+    kinds = [k.strip() for k in args.list.split(",") if k.strip()]
+    bad = [k for k in kinds if k not in FM_TYPES]
+    if bad:
+        raise SystemExit(f"[connect] unknown --list kinds {bad}; choose from {list(FM_TYPES)}")
     serial = pick_device(args.serial) if not args.dry_run else (args.serial or "?")
-    connect(serial, args.pc_name, dry_run=args.dry_run, watch_seconds=args.watch)
+    connect(serial, args.pc_name, dry_run=args.dry_run, watch_seconds=args.watch,
+            list_kinds=kinds)
 
 
 if __name__ == "__main__":

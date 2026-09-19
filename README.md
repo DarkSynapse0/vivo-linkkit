@@ -63,16 +63,24 @@ subprotocol `v1.hc.vivo.com.cn, <token>`) and streams events —
 listing, input, and notifications ride this clear channel; only the video/bulk
 media needs the `:10381` TLS.
 
-Port map (from the client config): `10380` control HTTP **+ TLS** + ws, `10381`
-screen mirror (video, TLS), `5679`/`8904` reverse channels (**VDFS** file transfer
-+ relay). **File manager decrypted:** using `SSLKEYLOGFILE` on Office Kit + a
-usbmon capture, demuxing the ADB streams and running `tshark -o tls.keylog_file`,
-we read the file-listing in the clear — it's **plaintext JSON over TLS** (no
-app-layer AES; `:10380` serves both plaintext and TLS by sniffing the first byte).
-Listing fields: `fileName`, `fileSize`, `savePath`, `mimeType`, `isDirectory`, …
-**Next:** grab the exact fm *request* body via a live TLS `POST` (the response
-format is known), then screen mirror on `:10381` (§5). Full detail in
-[`protocol/PROTOCOL.md`](protocol/PROTOCOL.md).
+Port map: `10380` control HTTP **+ TLS** + ws, `10381` screen mirror (video, TLS),
+`5679`/`8904` reverse channels (**VDFS** file transfer + relay). **File browsing
+works end-to-end in our client** — `connect_usb.py --list images,videos,docs`
+lists real files off the phone (name/size/path), cloud-free with a self-minted
+token:
+
+```
+$ python -m vivolinkkit.connect_usb --list images,videos
+[files:images] … 200 files: Screenshot_2026_0918_230722.png, IMG_20260918…jpg, …
+[files:videos] …  64 files: video_20260911_164804.mp4 (169 MB), …
+```
+
+The fm API is `POST /pc_file_manager/channel` over TLS (`:10380` sniffs the first
+byte: `0x16`→TLS); the body's `type` field (`REQUEST_POSTS_IMAGELIST`, etc.) was
+the last missing piece. Decryption used `SSLKEYLOGFILE` + a usbmon capture +
+`scripts/vm/decrypt_usb_tls.py` (reorders the ADB-tunnelled TLS records so tshark
+decrypts both directions). **Next:** file transfer/download + screen mirror on
+`:10381` (§5). Full detail in [`protocol/PROTOCOL.md`](protocol/PROTOCOL.md).
 
 ## Quick start
 

@@ -240,11 +240,27 @@ Multiple connect modes (from `app-connection.js` / `components-connection.js`):
     Decrypted **`/version`** request body (fuller than §8's): `{version,
     connBaseVersionCode,pcSuiteVersionCode,timestamp,connectionId,pcDeviceId,
     isAutoConnect,token,isOversea:true,pcOsType:"win32",pcOsVersion}`.
-  - **Only remaining detail:** the exact fm *request* body (my ADB reassembly
-    loses the client→server direction on keep-alive connections). Get it via a
-    live TLS `POST` to `:10380` (unverified cert, `rejectUnauthorized:false` like
-    the client) once the phone is on host adb — the response format above is known.
-    (`isFmHasPermission:false` in `/base-info` may gate some ops with a phone grant.)
+  - **File listing WORKS in our client (VERIFIED end-to-end).** `POST` over TLS
+    to `:10380/pc_file_manager/channel`, headers just `newToken` + `Content-Type:
+    application/json`, body:
+    ```json
+    {"category":"","data":"","fileCount":0,"sortCondition":9,"groupBy":1,
+     "type":"REQUEST_POSTS_IMAGELIST","pageIndex":0,"pageNumber":200,"firstFlag":false}
+    ```
+    The **`type`** field was the missing piece (the earlier "bad requestBody").
+    Values: `REQUEST_POSTS_{HOMEDATA,IMAGELIST,VIDEOLIST,AUDIOLIST,DOCSLIST,
+    WEB_DOCSLIST,FILELIST,NEW_APP,NEW_QQ,NEW_WECHAT,ONE_MOTH_LIST,
+    RECENTE_DELETE_LIST}`. Response = `{"dataList":…}` with `fileName/fileSize/
+    savePath/mimeType/isDirectory/date/duration`. Other fm endpoints:
+    `/tab_count?type=N`, `/get_path`, `/download`, `/download_info`, `/thumb?
+    fileUri=…&width=…`, `/query_directory_size`, `/recycle_operation`,
+    `/trans_open_file`, `/drop_files_info`. Driven by
+    `connect_usb.py --list images,videos,docs,audio,home,webdocs,files`.
+  - **Decrypt method note:** the synthetic pcap must **reorder TLS records into
+    real handshake flow** (ClientHello → ServerHello.. → client CCS/Finished →
+    client APP → server APP); otherwise tshark hits the client's encrypted records
+    before the ServerHello random and only the *server* direction decrypts. See
+    `scripts/vm/decrypt_usb_tls.py`. (`isFmHasPermission:false` didn't block listing.)
 - **`getPhone` response (VERIFIED):** `data` is a JSON *string* →
   ```json
   {"deviceType":"phone","bleId":"<6-digit>","openId":"<64-hex device openId>",
