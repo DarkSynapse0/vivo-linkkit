@@ -410,17 +410,36 @@ wrapped (RSA/`createRequestSign`) on top of TLS.
        text `"CONTINUE_OPEN_SCREEN:"` (exactly the constant, empty payload →
        `substring(21)==""` → launch). `WebSocketController` launches
        `MediaProjectionActivity` → the "Start casting?" dialog.
-    4. User taps Allow → `MirrorService.initMediaProjection(CODE,DATA)` → the cast
-       server (`HttpServerInitializer`, `OptionalSslHandler`+`TokenCheckController`)
-       **binds on `:10180`** (`CastSourceConfig.port`).
-    5. `adb forward 10180`; open `ws :10180/mirror/screen` (subprotocol
+    4. User taps Allow → `MediaProjectionActivity.onActivityResult(RESULT_OK)` →
+       `CastSource.init(...)` with `CastSourceConfig().setPort(10381)` → the cast
+       server (`OptionalSslHandler`+`TokenCheckController`) **binds on `:10381`**
+       (verified in `MediaProjectionActivity` line ~357 — *not* `:10180`, which the
+       earlier decompile-era note had wrong).
+    5. `adb forward 10381`; open `ws :10381/mirror/screen` (subprotocol
        `v1.hc.vivo.com.cn,<token>`); send `SCREEN_START:{SessionReq}`; read the
        `DEVICE_INFO:` reply then the H.264 `BinaryWebSocketFrame`s; decode (PyAV).
-  - **Status:** the whole sequence is coded (`scripts/vm/mirror_prototype.py`) and
-    verified step-by-step against the source; a live frame wasn't captured because
-    the phone's `:10380` bind became flaky after many connect cycles (needs a
-    phone reboot / a clean Office Kit connect to reset). No Frida, no native TLS —
-    it's a ws + a decoder, blocked only on connect reliability + the user consent.
+  - **Status — protocol complete, consent-gated by the OS (verified 2026-09-19).**
+    Every layer up to the consent is coded (`scripts/vm/mirror_prototype.py`) and
+    confirmed **live on real hardware** via the phone's system activity log
+    (`adb logcat -b events`): connect + `/version` gate passes
+    (`isSupportScreenCapture()`), `CONTINUE_OPEN_SCREEN:` is delivered and dispatched
+    (`WebSocketController.channelRead0` → `b()`), `MediaProjectionActivity` launches,
+    **and the real system consent `com.android.systemui/.mediaprojection.permission.`
+    `MediaProjectionPermissionActivity` is created.** The last inch is an OS wall:
+    that systemui activity **self-cancels in ~29 ms** (`userLeaving=false, finish`;
+    reproduced 3×, independent of connect-settle timing) because our trigger is
+    **PC-initiated / background** — the launching task never becomes the real
+    foreground (`dumpsys` shows the launcher stays `topResumedActivity` throughout),
+    so Android's MediaProjection foreground-gesture requirement refuses the prompt.
+    The vendor client clears this because `com.vivo.pcsuite` is a **signed platform
+    app** (`scontext=…:platform_app` in the phone's SELinux audit) that either
+    auto-grants `MediaProjection` or is privileged to foreground its own allow-dialog
+    for the user to tap. **A clean-room, unsigned PC client cannot forge that
+    foreground gesture — this is the distribution boundary for phone→PC mirror, by
+    OS design (the same protection that stops any app silently screen-recording).**
+    So: mirror is fully reverse-engineered (a ws + a decoder, no Frida/native TLS),
+    but *streaming it* needs either the vendor platform signature or a genuine
+    on-device consent path we can't drive from the PC. Documented, not shipped.
 - **Input:** cross-device keyboard/mouse — `keyboardMouseCoordinationServer`.
 - **File transfer:** Vdfs (`VdfsClient`/`VdfsWsMsg`,
   `CONNECT_ROUTER.vdfsApplicationClient`) + the HTTP file APIs in §2.

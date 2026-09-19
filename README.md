@@ -91,7 +91,7 @@ reversing, not JS-grepping).
 | Account auth · cloud-free USB connect | JSON/HTTP | ✅ working |
 | Control websocket | JSON/WS | ✅ working (`--watch`) |
 | File **list · download · thumbnails** | JSON/HTTP | ✅ working |
-| **Screen mirror** (phone→PC) | Cast SDK ws `/mirror/screen` (H.264) — **protocol fully mapped** | 🟡 needs consent + decoder |
+| **Screen mirror** (phone→PC) | Cast SDK ws `:10381/mirror/screen` (H.264) — **protocol fully mapped** | 🔒 OS consent-gated (see below) |
 | File **upload** (PC→phone) | VDFS (`5679`/`8904`) | ⬜ native tier |
 | **Clipboard · notifications** | native `vivoSyncService` (MQTT + protobuf) | ⬜ native tier |
 
@@ -170,12 +170,19 @@ See the full [roadmap PDF](vivo-linkkit-ROADMAP.pdf) for detail.
 ## Contributing
 
 The protocol map in [`protocol/PROTOCOL.md`](protocol/PROTOCOL.md) is the heart of
-the project — published early on purpose, to recruit collaborators. The most
-valuable next work is **screen mirroring** — the phone→PC path is the vivo Cast
-SDK (`com.vivo.castsdk`, decompiled from the phone), a WebSocket `/mirror/screen`
-streaming H.264 on the same `:10380` server; the protocol is fully mapped in §6,
-and what's left is triggering the Android screen-capture consent within our
-session and decoding the frames (PyAV). Please keep the [clean-room
+the project — published early on purpose, to recruit collaborators. **Screen
+mirroring** (phone→PC) is the vivo Cast SDK (`com.vivo.castsdk`, decompiled from
+the phone): a WebSocket `:10381/mirror/screen` streaming H.264, fully mapped in
+§6. Every layer is reverse-engineered and coded
+([`scripts/vm/mirror_prototype.py`](scripts/vm/mirror_prototype.py)) and verified
+live on hardware — connect, the `/version` gate, the `CONTINUE_OPEN_SCREEN:`
+trigger, `MediaProjectionActivity`, *and* the system consent activity all fire.
+The one wall is **the OS itself**: Android's `MediaProjection` consent self-cancels
+in ~29 ms because a PC-initiated (background) trigger isn't a genuine on-device
+foreground gesture — the vendor client only clears it as a **signed platform app**.
+So mirror is *protocol-complete but consent-gated*, and streaming it needs either
+the vendor signature or a foreground-consent path we can't drive from the PC (open
+problem — ideas welcome). Please keep the [clean-room
 discipline](#interoperability-statement) — implement from the spec, never from
 transliterated decompiled code.
 

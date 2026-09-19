@@ -12,18 +12,31 @@ Full flow (see PROTOCOL.md §6):
   3. POST /base-info.
   4. Over /ws/heart-beat send text "CONTINUE_OPEN_SCREEN:" -> the phone shows the
      "Start casting?" dialog (WebSocketController -> MediaProjectionActivity).
-  5. USER taps Allow -> MirrorService gets MediaProjection -> the cast server
-     binds on :10180 (CastSourceConfig.port).
-  6. adb forward 10180; ws :10180/mirror/screen (subprotocol
+  5. USER taps Allow -> MediaProjectionActivity onActivityResult(RESULT_OK) ->
+     CastSource.init(setPort(10381)) -> the cast server binds on :10381.
+  6. adb forward 10381; ws :10381/mirror/screen (subprotocol
      "v1.hc.vivo.com.cn,<token>"); send "SCREEN_START:{SessionReq}"; read
      "DEVICE_INFO:" then H.264 BinaryWebSocketFrames -> captures/downloads/mirror.h264.
 
 Then:  ffmpeg -i captures/downloads/mirror.h264 -frames:v 1 frame.png   (decode)
 
+STATUS — protocol complete, consent-gated by the OS (verified on hardware
+2026-09-19 via `adb logcat -b events`). Steps 1-4 all fire correctly: connect,
+the /version gate (isSupportScreenCapture), CONTINUE_OPEN_SCREEN delivery, and
+MediaProjectionActivity launch — and the *system* consent activity
+(com.android.systemui .../MediaProjectionPermissionActivity) IS created. But it
+self-cancels in ~29 ms (userLeaving=false, reproduced 3x) because a PC-initiated
+(background) trigger never becomes the real foreground task, so Android's
+MediaProjection foreground-gesture requirement refuses the prompt. The vendor app
+gets past this only as a SIGNED PLATFORM APP. A clean-room PC client can't forge
+the on-device gesture — this is the OS boundary, not a protocol gap. See
+PROTOCOL.md §6. This script drives steps 1-6 for anyone who CAN satisfy the
+consent (e.g. a platform-signed build or a future foreground-consent path).
+
 Run:   PYTHONPATH=src .venv/bin/python scripts/vm/mirror_prototype.py [serial]
 Requires: phone on USB (debugging authorized), captures/auth/token.json (login).
-NOTE: after many connect cycles the phone's :10380 bind gets flaky — reboot the
-phone / do one clean Office Kit connect to reset if `phone :10380 up: False`.
+NOTE: if `phone :10380 up: False`, another process may hold the USB device (e.g.
+virt-manager's USB redirect) — free it, or reboot the phone for a clean connect.
 """
 from __future__ import annotations
 
@@ -119,6 +132,27 @@ SESSION_REQ = {"bit_rate": 8_000_000, "mime_type": "video/avc", "max_size": 1280
                "pc_version": "6.8.2", "msg_send_key_mode": "", "app_package_name": ""}
 
 
+CAST_PORT = 10381          # CastSourceConfig.setPort(10381) in MediaProjectionActivity
+CAST_HEX = ":2889"         # 10381 in /proc/net/tcp
+
+
+async def _heartbeat(ws) -> None:
+    """Keep the phone's IdleStateHandler(5s) from tearing the session down.
+
+    channelRead0 treats any frame containing PCShareManager.NORMAL ("normal") as a
+    heartbeat: it resets the idle counter and echoes it back. While the session
+    stays 'connected', pcsuite keeps its foreground service, which is what grants
+    MediaProjectionActivity the background-activity-launch privilege it needs for
+    the system consent dialog to actually reach the foreground.
+    """
+    try:
+        while True:
+            await ws.send("normal")
+            await asyncio.sleep(2)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 async def run() -> None:
     import websockets
     openid = json.loads((REPO / "captures/auth/token.json").read_text())["openId"]
@@ -131,19 +165,27 @@ async def run() -> None:
           "pcSystemType": "1"}))
     hb = await websockets.connect("ws://127.0.0.1:10380/ws/heart-beat",
                                   subprotocols=["v1.hc.vivo.com.cn", TOKEN], origin="file://", open_timeout=8)
-    print(">>> sending CONTINUE_OPEN_SCREEN — TAP 'START/ALLOW' on the phone <<<")
+    # Let the session settle into a stable 'connected' state (foreground service up)
+    # before asking for the screen. The consent dies with finish-imm:transit if it
+    # launches DURING the connect animation ("Connecting" -> "Connection successful"),
+    # so wait past that whole transition until the screen is quiescent.
+    beat = asyncio.ensure_future(_heartbeat(hb))
+    print("[hb] holding session alive 14s so the connect transition fully settles…")
+    await asyncio.sleep(14)
+    print(">>> sending CONTINUE_OPEN_SCREEN — TAP 'Start now' on the phone's dialog <<<")
     await hb.send("CONTINUE_OPEN_SCREEN:")
     loop = asyncio.get_event_loop(); port = None
-    for i in range(40):
+    for i in range(60):
         await asyncio.sleep(1)
-        if await loop.run_in_executor(None, phone_has, ":27C4"):
-            port = 10180; print(f"[cast] :10180 up after {i + 1}s"); break
+        if await loop.run_in_executor(None, phone_has, CAST_HEX):
+            port = CAST_PORT; print(f"[cast] :{CAST_PORT} up after {i + 1}s"); break
+    beat.cancel()
     if not port:
-        print("[cast] no cast port — dialog not granted?"); return
+        print("[cast] no cast port — consent not granted / dialog never reached foreground"); return
     await loop.run_in_executor(None, lambda: subprocess.run(
-        (["adb"] + (["-s", SERIAL] if SERIAL else []) + ["forward", "tcp:10180", "tcp:10180"]),
+        (["adb"] + (["-s", SERIAL] if SERIAL else []) + ["forward", f"tcp:{CAST_PORT}", f"tcp:{CAST_PORT}"]),
         capture_output=True)); await asyncio.sleep(1)
-    async with websockets.connect("ws://127.0.0.1:10180/mirror/screen",
+    async with websockets.connect(f"ws://127.0.0.1:{CAST_PORT}/mirror/screen",
                                   subprotocols=["v1.hc.vivo.com.cn", TOKEN], origin="file://",
                                   open_timeout=12, max_size=None) as ws:
         await ws.send("SCREEN_START:" + json.dumps(SESSION_REQ))
