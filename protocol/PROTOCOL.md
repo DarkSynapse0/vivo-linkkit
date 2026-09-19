@@ -440,6 +440,22 @@ wrapped (RSA/`createRequestSign`) on top of TLS.
     So: mirror is fully reverse-engineered (a ws + a decoder, no Frida/native TLS),
     but *streaming it* needs either the vendor platform signature or a genuine
     on-device consent path we can't drive from the PC. Documented, not shipped.
+  - **Both triggers dead-end at the same wall (traced 2026-09-19).** There are two
+    PC→phone screen messages — `CONTINUE_OPEN_SCREEN:` and `req_authrity{source}`
+    (`REQ_AUTH`, which uses a `CountDownLatch` and replies `res_authrity{auth:2}`
+    "pending" while awaiting the user). Both funnel through `WebSocketController.d()`
+    → `j()` (line ~997), which does `startActivity(MediaProjectionActivity, NEW_TASK)`
+    from the app context — the identical background launch. A user-tappable
+    *foreground* `PermissionActivity` only appears on a **connection-mutex** state
+    (another cast already active); it's a conflict-resolver, not the consent path.
+    So no PC-sendable message yields a stickable consent — confirming the gate is
+    the platform signature, not a missing handshake. The realistic way to use
+    vivo's *own* mirror is an on-device **privileged grant** (root, or a Shizuku
+    shell-UID helper) that satisfies MediaProjection; absent that, the interim mirror
+    engine is the `app_process` capture path (`vivolinkkit mirror`, drives scrcpy).
+  - **`appops set com.vivo.pcsuite PROJECT_MEDIA allow` does NOT bypass** on Android
+    16 (tested) — the consent still self-cancels; modern Android ignores the app-op
+    pre-grant for MediaProjection.
 - **Input:** cross-device keyboard/mouse — `keyboardMouseCoordinationServer`.
 - **File transfer:** Vdfs (`VdfsClient`/`VdfsWsMsg`,
   `CONNECT_ROUTER.vdfsApplicationClient`) + the HTTP file APIs in §2.

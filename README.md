@@ -98,8 +98,8 @@ reversing, not JS-grepping).
 | Account auth · cloud-free USB connect | JSON/HTTP | ✅ working |
 | Control websocket | JSON/WS | ✅ working (`--watch`) |
 | File **list · download · thumbnails** | JSON/HTTP | ✅ working |
-| **Screen mirror** (phone→PC) | `app_process` capture (scrcpy path) — consent-free | ✅ working (`mirror`) |
-| ↳ *via vivo's own Cast SDK* | Cast ws `:10381/mirror/screen` — **protocol fully mapped** | 🔒 OS consent-gated (see below) |
+| **Screen mirror** (phone→PC) | `app_process` capture (scrcpy path) — consent-free | ✅ working (`mirror`, **interim**) |
+| ↳ *via vivo's own Cast SDK* (the goal) | Cast ws `:10381/mirror/screen` — **protocol fully mapped** | 🔒 OS consent-gated; needs privileged grant (see below) |
 | File **upload** (PC→phone) | VDFS (`5679`/`8904`) | ⬜ native tier |
 | **Clipboard · notifications** | native `vivoSyncService` (MQTT + protobuf) | ⬜ native tier |
 
@@ -144,12 +144,16 @@ vivolinkkit mirror --view-only         # watch only, no control
 vivolinkkit mirror --record phone.mp4  # record instead of / as well as viewing
 ```
 
-This is **consent-free**: it streams via the `app_process` display-capture path
-(the same mechanism as [scrcpy](https://github.com/Genymobile/scrcpy), which it
-drives) — *not* vivo's Cast SDK, whose screen-capture consent is gated by Android's
-MediaProjection model for any non-platform-signed client (fully reverse-engineered
-but unusable from a clean-room PC client — see [`PROTOCOL.md`](protocol/PROTOCOL.md)
-§6). Requires `scrcpy` (`sudo pacman -S scrcpy`).
+This is an **interim engine**, consent-free: it streams via the `app_process`
+display-capture path (the same mechanism as
+[scrcpy](https://github.com/Genymobile/scrcpy), which it drives). The **goal** is
+mirror through vivo's *own* Cast SDK — that protocol is fully reverse-engineered,
+but its screen-capture consent is gated by Android's MediaProjection model for any
+non-platform-signed client (both PC triggers dead-end at the same background
+consent, which self-cancels in ~29 ms; see [`PROTOCOL.md`](protocol/PROTOCOL.md)
+§6). Making vivo-native mirror usable needs an on-device privileged grant (root, or
+a Shizuku shell-UID helper) — until then, `mirror` uses the `app_process` path.
+Requires `scrcpy` (`sudo pacman -S scrcpy`).
 
 ### Instrumentation (for extending the protocol)
 

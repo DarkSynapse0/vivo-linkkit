@@ -1,16 +1,21 @@
 """vivolinkkit mirror — phone→PC screen mirror over USB.
 
-This does NOT use vivo's Cast SDK. That protocol is fully reverse-engineered
-(see protocol/PROTOCOL.md §6) but its screen-capture consent is gated by Android's
-MediaProjection model: a PC-initiated trigger never becomes a foreground gesture,
-so the system consent self-cancels (verified on Android 16). The vendor client
-only clears it as a *signed platform app* — which a clean-room client can't forge.
+INTERIM ENGINE. This drives the `app_process` capture path (scrcpy's mechanism),
+NOT vivo's own Cast SDK. It's the *fallback* until vivo-native mirror is usable.
 
-So we mirror the way scrcpy does, which sidesteps MediaProjection entirely: a small
-server runs on the phone as the shell user (`app_process`), reads the display via
-framework APIs, and encodes H.264/HEVC with MediaCodec — no consent dialog, works
-on any Android including vivo. This command drives `scrcpy` (Apache-2.0), so it's
-honest about the mechanism and needs no code we'd have to re-implement.
+Why not vivo-native: that protocol is fully reverse-engineered (protocol/PROTOCOL.md
+§6), but both PC→phone triggers (`CONTINUE_OPEN_SCREEN:` and `req_authrity`) funnel
+to the same background `MediaProjectionActivity`, and Android's MediaProjection
+consent self-cancels a PC-initiated (non-foreground) request in ~29 ms (verified on
+Android 16; `appops PROJECT_MEDIA allow` doesn't help). The vendor client clears it
+only as a *signed platform app*. So vivo-native mirror needs an on-device privileged
+grant (root, or a Shizuku shell-UID helper) — until someone wires that up, we mirror
+the consent-free way instead.
+
+The `app_process` path sidesteps MediaProjection entirely: a small server runs on
+the phone as the shell user, reads the display via framework APIs, and encodes
+H.264/HEVC with MediaCodec — no consent dialog, works on any Android incl. vivo.
+This command drives `scrcpy` (Apache-2.0), honest about the mechanism.
 
     vivolinkkit mirror                        # live, interactive window
     vivolinkkit mirror --view-only            # no keyboard/mouse control
