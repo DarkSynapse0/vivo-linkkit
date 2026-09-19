@@ -554,6 +554,28 @@ wrapped (RSA/`createRequestSign`) on top of TLS.
     vivo-specific result-attribution quirk, not a stock-AOSP finishing race — and
     still nothing an external shell/ADB client can set. Conclusion unchanged: needs
     platform signature or root.
+  - **Built a test APK to isolate it — vivo's WM is stock-correct (2026-09-19).**
+    Compiled a throwaway debug app (`aapt2`/`d8`/`apksigner`; sources not committed):
+    a `standard`-launchMode `ParentActivity` that calls
+    `startActivityForResult(ChildActivity, 1000)` from `onCreate`; the child writes
+    `getCallingPackage()` to a file read back via `run-as`.
+    - **Foreground launch** (`am start -f 0x10008000` = `NEW_TASK|CLEAR_TASK`, the
+      same flags pcsuite uses): child reports `callingPackage=com.test.resulttest` —
+      **`resultTo` is preserved.** So this Android 16 build does NOT strip result
+      attribution for the `onCreate` + `NEW_TASK` pattern; vivo's WM is stock-correct
+      here, and the "vivo modifies ActivityStarter" theory is out.
+    - **Background launch** (a delayed `Service` doing the same `startActivity` from
+      the background, even with `SYSTEM_ALERT_WINDOW` granted): the parent launch is
+      **BAL-blocked entirely** — no `ParentActivity`, no result. A non-system app
+      simply cannot perform the privileged background activity launch that
+      `com.vivo.pcsuite` (platform-signed, BAL-exempt) performs.
+    - **Conclusion.** The `resultTo=null` is therefore intrinsic to pcsuite's
+      *privileged background launch* of its transparent `MediaProjectionActivity` — a
+      launch a clean-room client can neither reproduce (BAL blocks it) nor repair
+      (`resultTo` is a caller-Binder relationship, not an app-op). This is the final,
+      independent confirmation: **phone→PC vivo-native mirror is gated behind the
+      platform/system signature; the interim `app_process` path (`vivolinkkit mirror`)
+      is the answer.** Investigation closed.
 - **Input:** cross-device keyboard/mouse — `keyboardMouseCoordinationServer`.
 - **File transfer:** Vdfs (`VdfsClient`/`VdfsWsMsg`,
   `CONNECT_ROUTER.vdfsApplicationClient`) + the HTTP file APIs in §2.
