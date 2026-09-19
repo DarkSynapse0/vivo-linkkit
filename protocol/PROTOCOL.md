@@ -498,6 +498,29 @@ wrapped (RSA/`createRequestSign`) on top of TLS.
     genuine foreground launch (platform signature, on-device user gesture, or root).
     `MANAGE_MEDIA_PROJECTION` (the only API that could mint/inject the token for
     another UID) is `signature|role:systemui` and unreachable from shell/Shizuku.
+  - **DEFINITIVE root cause (ActivityRecord captured, 2026-09-19).** Spamming the
+    trigger while hammering `dumpsys activity activities` snapshotted the short-lived
+    consent `ActivityRecord`. It settles the question: the consent has
+    `launchedFromUid=10095 launchedFromPackage=com.vivo.pcsuite` (correct
+    `getLaunchedFromPackage()`) but **no `resultTo=`/`requestCode=` field at all** —
+    i.e. `getCallingPackage() == null`. Android 16's
+    `MediaProjectionPermissionActivity.onCreate()` starts with, in effect,
+    `if (getCallingPackage()==null && !hasExtra(EXTRA_PACKAGE_REUSING_GRANTED_CONSENT))`
+    `{ finishAsCancelled(); return; }` — hence the ~4 ms cancel
+    (`state=STOPPING finishing=true lastLaunchTime=-25ms`). The
+    `sysui_multi_action [757=1144 APP_TRANSITION_CANCELLED, 758=8 WARM_LAUNCH]` metric
+    is the transition-cancelled *effect*, not a reason. **Crucially the snapshot's
+    `topResumedActivity` was `com.vivo.pcsuite/.cast.MediaProjectionActivity` itself —
+    the vendor activity WAS top-resumed and the consent still cancelled — decoupling
+    the failure from BAL/focus entirely.** The real defect: driven by our background
+    `CONTINUE_OPEN_SCREEN` path, the vendor's `MediaProjectionActivity` launches the
+    systemui consent **without a result-caller relationship** (`resultTo` unset), so
+    `getCallingPackage()` is null. That linkage is set by the framework at
+    `startActivityForResult` time from the launching activity's state; it can't be
+    injected from outside the app, and `EXTRA_PACKAGE_REUSING_GRANTED_CONSENT` (the
+    sanctioned alternative) is a system-server-only path. So the boundary sits at the
+    framework result-attribution layer — still unreachable from a clean-room PC/ADB
+    client without the platform signature or root.
 - **Input:** cross-device keyboard/mouse — `keyboardMouseCoordinationServer`.
 - **File transfer:** Vdfs (`VdfsClient`/`VdfsWsMsg`,
   `CONNECT_ROUTER.vdfsApplicationClient`) + the HTTP file APIs in §2.
