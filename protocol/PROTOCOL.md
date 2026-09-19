@@ -290,13 +290,26 @@ app secret/key found** (only public RSA keys, §4) — clean-room-safe.
      o.sendToHost("login-success", n);
    }
    ```
-3. **Token exchange:** `POST /account/getTokenByVivoTokenAndOpenid` → `{ token }`.
-   Verified: `getTokenByVivoTokenAndOpenid = () => requestBranch({url:
-   "/account/getTokenByVivoTokenAndOpenid", method:"post"})`; caller uses `.token`.
-4. **Authenticated calls:** the returned token is **`newToken`**, attached as an
-   HTTP **header** on every gateway call (`e.defaults.headers.newToken = n`;
-   `headers:{newToken:…}`) and as the per-session connect token in the device/wss
-   payload (`newToken: getConnectToken()`).
+3. **No token exchange — the token is inline.** *(Corrected from a live mitmproxy
+   capture of pcsuite 6.8.2, India account, 2026-09-19; supersedes the earlier
+   decompiled guess.)* The `getHtml` hidden `<input>` value is POSITIONAL
+   `&`-delimited, **not** `k=v`:
+   `openId & token & accountDeviceId & regionCode & name & nick & extra`, e.g.
+   `9f8c…&a818…d65.<epochMs>&wb_5146…&IN&null&null&null`. **Field[1] IS the
+   session token** (equal to the `vivo_account_cookie_iqoo_vivotoken` cookie).
+   The decompiled `getTokenByVivoTokenAndOpenid` is **never called** in this flow
+   (0 hits) — it likely belongs to the CN or device-connect path.
+4. **Authenticated gateway calls:** send **`openId`** + **`token`** request
+   **headers** (plus `source:2`, `version:6.8.2`, `deviceId`, `countryCode`).
+   **No `newToken` header appears** (0 hits) and these `/vbusiness/account/*`
+   calls carry **no request signature** — auth is `openId`+`token`+TLS. Verified:
+   `POST {region}-psuite…/vbusiness/account/getUserInfo` → **401** without the
+   headers, **200** with them (same for `getUserCookie`). The OAuth step that
+   mints the token: `GET {region}-passport…/v3/web/login/authorize?client_id=130&
+   redirect_uri=https://{region}-psuite…/vbusiness/account/cookie/getHtml&type=1&
+   theme=light&lang=en_US` → 302 → `getHtml?openid=…` (the hidden-input page).
+   `newToken`/`getConnectToken()` remain TODO for the device/wss connect payload
+   — verify against a phone-connected capture.
 5. **Gateway hosts (region-selected):** `pcsuite-api.vivo.com` (CN);
    `asia-/in-/eu-/ru-/de-gdpr-pcsuite-api.vivoglobal.com` (global). Device
    register/scan: `/scan/sid` → `/scan/getPhone` (§1). `connection-center.vivo.com.cn`
@@ -304,29 +317,34 @@ app secret/key found** (only public RSA keys, §4) — clean-room-safe.
 6. **Request signing:** `createRequestSign()` exists; exact inputs `TODO` (no
    secret embedded, so likely token/timestamp/nonce based).
 
-**Client blueprint (P2):** open the passport login in a system browser/webview →
-capture the redirect's hidden-input fields (openid + vivoToken) → `POST
-getTokenByVivoTokenAndOpenid` → hold `newToken` → send it as the `newToken` header
-on gateway calls and as the connect token. Legitimate "drive the user's own login."
+**Client blueprint (P2) — VERIFIED:** open the passport login in a system
+browser/webview → on the `getHtml` redirect, read the hidden input and split on
+`&` POSITIONALLY → take `openId` (field 0) + `token` (field 1) → send them as
+`openId`/`token` headers on `/vbusiness/account/*` gateway calls. No exchange, no
+signature. Legitimate "drive the user's own login." Implemented in
+`src/vivolinkkit/login.py` (`parse_hidden_positional` + `gateway_headers`).
 
-`TODO`: exact redirect host/params, `getTokenByVivoTokenAndOpenid` request body +
-full response shape, `createRequestSign` inputs.
+`TODO`: the device-connect gateway (`pcsuite-api`) — does it use the same
+`openId`+`token`, or the decompiled `newToken` + `createRequestSign`? Needs a
+phone-connected capture.
 
 ## Resolved
 - ✅ Auth model: account login required + QR/verify-code/handshake (§0).
 - ✅ Session crypto: AES-256-CBC, PC-generated key/iv sent to phone (§4).
 - ✅ QR direction + format: PC shows, phone scans; cloud `sid` URL (§1).
 - ✅ Transport/framing: wss + JSON `MESSAGE_EVENT_TYPE` / `CONNECT_ROUTER` (§2/§3).
-- ✅ Login/token flow: passport web login → `getTokenByVivoTokenAndOpenid` →
-  `newToken` header (§8). No embedded secret.
+- ✅ Login/token flow (LIVE-VERIFIED): passport web login → `getHtml` hidden
+  input → `token` (field 1) → `openId`+`token` headers on the account gateway
+  (§8). No exchange call, no `newToken`, no signature. No embedded secret.
 
 ## Open questions (remaining — need a live capture / build-and-observe)
 - Can a **USB or Wi-Fi-Direct connect fully avoid the vivo cloud** (`/scan/*`)?
   This decides how self-contained a distributable client can be. **Key strategic
   question for P2.**
 - Exact **verify-code** check (who computes/compares it, digits, where shown).
-- `getTokenByVivoTokenAndOpenid` request body + full response; `createRequestSign`
-  inputs (is any gateway call signed beyond the `newToken` header + TLS?).
+- ~~`getTokenByVivoTokenAndOpenid` request body~~ — RESOLVED: not used in the web
+  flow (§8). Still open: does the **device-connect** gateway (`pcsuite-api`) sign
+  calls (`createRequestSign`) or use `newToken`? Needs a phone-connected capture.
 - Which side is the **WSS server** in each mode (PC-hosts vs phone-hosts)?
 - Wire-level **video** codec/packetization for VivoScreen (H.264 vs H.265, RTP?).
 

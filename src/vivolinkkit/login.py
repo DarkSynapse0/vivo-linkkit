@@ -4,15 +4,20 @@ Mirrors the official PC Suite flow (PROTOCOL.md §8), clean-room and legitimate:
 we never bypass auth or embed a vendor secret — the user signs into *their own*
 vivo account, exactly as the official client makes them.
 
-Flow:
+Flow (CORRECTED from a live mitmproxy capture of the real pcsuite 6.8.2 client,
+2026-09-19 — supersedes the decompiled-JS guess of a token-exchange step):
   1. Open the vivo passport login page in a real browser (Playwright/Chromium).
   2. The user authenticates (SMS code or password) in that window.
   3. On the redirect to `…/vbusiness/account/cookie/getHtml?openid=…`, scrape the
-     page's hidden <input> value and split it on "&" → openid + vivoToken (+more).
-     (This is exactly what the client's preload-welcome.js does.)
-  4. Exchange them: POST /account/getTokenByVivoTokenAndOpenid → { token }.
-     That `token` is the `newToken` attached as an HTTP header on gateway calls.
-  5. Persist it to captures/auth/ (gitignored).
+     page's hidden <input> value and split it on "&". The fields are POSITIONAL,
+     not k=v:  openId & token & deviceId & regionCode & name & nick & extra.
+     Field[1] IS the session token (it also equals the
+     `vivo_account_cookie_iqoo_vivotoken` cookie) — no exchange call is needed.
+  4. Authenticated gateway calls send `openId:` and `token:` HTTP headers (plus
+     source=2 / version / deviceId / countryCode). There is NO
+     `getTokenByVivoTokenAndOpenid` POST and NO `newToken` header in this flow;
+     verified by `getUserInfo` going 401 (no token hdr) → 200 (with token hdr).
+  5. Persist to captures/auth/ (gitignored).
 
 Because the exact `loginUrl` is region/config-derived in the client, it is a
 CONFIGURABLE input here — the first live run confirms the precise params, then we
@@ -68,8 +73,19 @@ REDIRECT_PATH = "/vbusiness/account/cookie/getHtml"
 # The redirect page whose hidden <input> carries the credentials (§8 step 2).
 REDIRECT_MARKER = "vbusiness/account/cookie/getHtml?openid="
 
-# Token-exchange endpoint (§8 step 3) — under the /vbusiness prefix.
-TOKEN_PATH = "/vbusiness/account/getTokenByVivoTokenAndOpenid"
+# The getHtml hidden-input value is `&`-delimited POSITIONAL fields (NOT k=v).
+# Confirmed live: "9f8c…&a818…d65.1789…&wb_51463…&IN&null&null&null".
+HIDDEN_FIELDS = ["openId", "token", "accountDeviceId", "regionCode",
+                 "name", "nick", "extra"]
+
+# Verify auth by hitting a cheap authenticated gateway endpoint (401 w/o token,
+# 200 with it). This replaces the fictional token-exchange POST.
+VERIFY_PATH = "/vbusiness/account/getUserInfo"
+
+# The real client's User-Agent (Electron) — some gateway paths key off it.
+PCSUITE_UA = ("Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) pcsuite/6.8.2 Chrome/108.0.5359.62 "
+              "Electron/22.0.0 Safari/537.36")
 
 # Every gateway request carries the client's "Cy" auth headers (getCyHeaders in
 # the client JS). The signature is base64(HMAC-SHA256) with the timestamp string
@@ -134,13 +150,47 @@ def build_login_url(account_host: str, client_id: str, redirect_uri: str,
 
 
 def parse_credentials(hidden_value: str) -> dict:
-    """The redirect page's hidden input is `k=v&k=v&…` — parse it to a dict."""
+    """URL-query style `k=v&k=v&…` — used for the getHtml *query string*."""
     creds: dict = {}
     for pair in hidden_value.split("&"):
         if "=" in pair:
             k, v = pair.split("=", 1)
             creds[k] = urllib.parse.unquote(v)
     return creds
+
+
+def parse_hidden_positional(hidden_value: str) -> dict:
+    """The getHtml *hidden input* value: POSITIONAL `&`-delimited fields.
+
+    openId & token & accountDeviceId & regionCode & name & nick & extra
+    Field[1] is the session token used directly as the `token:` header.
+    """
+    out: dict = {}
+    parts = hidden_value.split("&")
+    for i, name in enumerate(HIDDEN_FIELDS):
+        if i < len(parts):
+            v = urllib.parse.unquote(parts[i])
+            if v and v != "null":
+                out[name] = v
+    return out
+
+
+def gateway_headers(openid: str, token: str, region: str = "in") -> dict:
+    """Headers the real client sends on authenticated psuite gateway calls.
+
+    Verified live: openId+token are the auth; there is no request signature on
+    these `/vbusiness/account/*` calls (auth = these headers + TLS)."""
+    return {
+        "openId": openid,
+        "token": token,
+        "source": "2",
+        "version": APP_VERSION,
+        "deviceId": get_device_id(),
+        "countryCode": region.lower(),
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/plain, */*",
+        "User-Agent": PCSUITE_UA,
+    }
 
 
 def capture_login(login_url: str, gateway: str = "", timeout_s: float = 300.0) -> dict:
@@ -206,8 +256,12 @@ def capture_login(login_url: str, gateway: str = "", timeout_s: float = 300.0) -
                 ) or []
                 captured["_hidden_inputs"] = vals
                 for v in vals:
-                    if v and "=" in v:
+                    if not v:
+                        continue
+                    if "=" in v.split("&", 1)[0]:      # legacy k=v form
                         captured.update(parse_credentials(v))
+                    else:                               # real positional form
+                        captured["_creds"] = parse_hidden_positional(v)
             except Exception:  # noqa: BLE001
                 pass
             # The page is `cookie/getHtml` — the token is likely a cookie.
@@ -218,28 +272,23 @@ def capture_login(login_url: str, gateway: str = "", timeout_s: float = 300.0) -
             except Exception:  # noqa: BLE001
                 pass
 
-            # Exchange the token FROM the authenticated browser session so the
-            # session cookies (incl. JSESSIONID) are sent natively, exactly like
-            # the client. Headers replicate the requestBranch instance (module 277:
-            # openId/token/source=2/version/deviceId/countryCode) plus the Cy sign
-            # set as a harmless superset.
+            # VERIFY (not exchange): the token is already in hand (hidden field[1]).
+            # Prove it by calling an authenticated gateway endpoint with the
+            # openId+token headers — expect 401 without, 200 with. Done from the
+            # browser context so it looks native, though only the headers matter.
             if gateway:
-                openid = find_openid(captured)
-                ts = int(time.time() * 1000)
-                hdrs = {
-                    "openId": openid, "token": "", "source": "2",
-                    "version": APP_VERSION, "deviceId": get_device_id(),
-                    "countryCode": (captured.get("_cookies") or {}).get(
-                        "vivo_account_cookie_iqoo_regioncode", "IN"),
-                    "timestamp": str(ts), "sign": request_sign(ts), "model": "win",
-                    "systemVersion": SYSTEM_VERSION, "appVersion": APP_VERSION,
-                }
+                creds = captured.get("_creds") or {}
+                openid = creds.get("openId") or find_openid(captured)
+                token = creds.get("token") or find_vivo_token(captured)
+                region = creds.get("regionCode", "IN")
+                hdrs = gateway_headers(openid, token, region)
                 try:
-                    r = context.request.post(gateway + TOKEN_PATH, headers=hdrs, data="")
-                    captured["_token_status"] = r.status
-                    captured["_token_body"] = r.text()[:2000]
+                    r = context.request.post(gateway + VERIFY_PATH, headers=hdrs,
+                                             data="{}")
+                    captured["_verify_status"] = r.status
+                    captured["_verify_body"] = r.text()[:2000]
                 except Exception as e:  # noqa: BLE001
-                    captured["_token_error"] = f"{type(e).__name__}: {e}"
+                    captured["_verify_error"] = f"{type(e).__name__}: {e}"
         browser.close()
 
     if not captured:
@@ -272,34 +321,11 @@ def find_vivo_token(creds: dict) -> str:
     return ""
 
 
-def exchange_token(gateway: str, creds: dict, timeout_s: float = 15.0) -> dict:
-    """POST the token endpoint with the client's Cy auth headers + account cookies.
-    openid/vivoToken also go in the body; the server also reads the cookies."""
-    openid = find_openid(creds)
-    body = json.dumps({
-        "openid": openid,
-        "vivoToken": find_vivo_token(creds),
-    }).encode()
-    headers = {
-        "Content-Type": "application/json",
-        "User-Agent": "vivo-linkkit/0",
-        **cy_headers(openid),  # openId/source/timestamp/sign/deviceId/model/…
-    }
-    cookies = creds.get("_cookies") or {}
-    if cookies:
-        headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
-    req = urllib.request.Request(
-        gateway + TOKEN_PATH, data=body, method="POST", headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout_s) as r:
-            raw = r.read().decode("utf-8", "replace")
-    except urllib.error.HTTPError as e:
-        return {"_http_status": e.code,
-                "_body": e.read().decode("utf-8", "replace")[:2000]}
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        return {"_body": raw[:2000]}
+# NOTE: the decompiled `getTokenByVivoTokenAndOpenid` exchange is NOT part of the
+# observed global web-login flow (0 calls in the 2026-09-19 capture; the token is
+# delivered inline via getHtml). `request_sign`/`cy_headers` are retained for the
+# device-connect gateway (pcsuite-api), whose signed calls we verify once the
+# phone is passed through — do not resurrect a token-exchange POST here.
 
 
 def main() -> None:
@@ -325,38 +351,44 @@ def main() -> None:
         account_host, args.client_id, redirect_uri, args.lang)
     print(f"[login] region={args.region}  account={account_host}  gateway={gateway}")
 
-    print(f"[login] token exchange (in-session) at {gateway}{TOKEN_PATH}")
+    print(f"[login] verify (in-session) at {gateway}{VERIFY_PATH}")
     creds = capture_login(login_url, gateway)
     AUTH_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     (AUTH_DIR / f"login-raw-{stamp}.json").write_text(json.dumps(creds, indent=2))
+    parsed = creds.get("_creds") or {}
     # Observability without leaking secret values to the terminal:
-    print(f"[login] captured fields: {sorted(k for k in creds if not k.startswith('_'))}")
-    print(f"[login] openid: {'yes' if creds.get('openid') else 'no'}")
+    print(f"[login] openId parsed: {'yes' if parsed.get('openId') else 'no'}")
+    print(f"[login] token parsed:  {'yes' if parsed.get('token') else 'no'}"
+          f" (region {parsed.get('regionCode','?')})")
     hidden = creds.get("_hidden_inputs") or []
     print(f"[login] hidden inputs: {len(hidden)} (lengths: {[len(v or '') for v in hidden]})")
-    print(f"[login] cookie names: {sorted((creds.get('_cookies') or {}).keys())}")
-    print(f"[login] vivoToken located: {'yes' if find_vivo_token(creds) else 'no'}")
 
-    if not creds.get("openid"):
-        raise SystemExit("[login] captured redirect but no openid — inspect the "
-                         f"raw dump in {AUTH_DIR} and adjust the flow.")
+    if not parsed.get("token"):
+        raise SystemExit("[login] captured redirect but no token in hidden field[1] "
+                         f"— inspect the raw dump in {AUTH_DIR} and adjust the flow.")
 
-    status = creds.get("_token_status")
-    body = creds.get("_token_body", creds.get("_token_error", ""))
+    status = creds.get("_verify_status")
+    body = creds.get("_verify_body", creds.get("_verify_error", ""))
     resp = {}
     try:
         resp = json.loads(body) if body else {}
     except json.JSONDecodeError:
         pass
-    (AUTH_DIR / "token.json").write_text(json.dumps(
-        {"status": status, "response": resp or body}, indent=2))
-    token = resp.get("token") or (resp.get("data") or {}).get("token")
-    if token:
-        print("[login] SUCCESS — newToken obtained. Saved to captures/auth/token.json. "
-              "Use it as the 'newToken' header on gateway calls (PROTOCOL.md §8).")
+    # Persist the working credential (gitignored) for reuse on gateway calls.
+    (AUTH_DIR / "token.json").write_text(json.dumps({
+        "openId": parsed.get("openId"),
+        "token": parsed.get("token"),
+        "regionCode": parsed.get("regionCode"),
+        "verify_status": status,
+        "verify_response": resp or body,
+    }, indent=2))
+    if status == 200 and (resp.get("code") == 0 or resp.get("ok")):
+        print("[login] SUCCESS — token verified (getUserInfo 200). Saved to "
+              "captures/auth/token.json. Send openId+token headers on gateway "
+              "calls (PROTOCOL.md §8).")
     else:
-        print(f"[login] no token yet — HTTP {status}. Response snippet:\n  {str(body)[:400]}")
+        print(f"[login] token NOT verified — HTTP {status}. Response:\n  {str(body)[:400]}")
 
 
 if __name__ == "__main__":
