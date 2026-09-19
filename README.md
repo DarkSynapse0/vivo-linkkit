@@ -63,15 +63,16 @@ subprotocol `v1.hc.vivo.com.cn, <token>`) and streams events —
 listing, input, and notifications ride this clear channel; only the video/bulk
 media needs the `:10381` TLS.
 
-Port map (from the client config): `10380` control HTTP + ws, `10381` screen
-mirror (video, TLS), `5679`/`8904` the reverse channels (**VDFS** file transfer +
-relay). The file-manager API is mapped (`POST /pc_file_manager/channel` +
-`/download` + `/thumb`) but its body is **AES-256-CBC encrypted** (returns
-`"bad requestBody"` to plaintext; there is no key-exchange endpoint). **Next
-milestone:** recover the AES session-key scheme — most reliably by relaunching
-Office Kit in the VM with `SSLKEYLOGFILE` set and decrypting its file/mirror
-traffic — which unlocks file listing/transfer and screen mirror (§5). Full detail
-in [`protocol/PROTOCOL.md`](protocol/PROTOCOL.md).
+Port map (from the client config): `10380` control HTTP **+ TLS** + ws, `10381`
+screen mirror (video, TLS), `5679`/`8904` reverse channels (**VDFS** file transfer
++ relay). **File manager decrypted:** using `SSLKEYLOGFILE` on Office Kit + a
+usbmon capture, demuxing the ADB streams and running `tshark -o tls.keylog_file`,
+we read the file-listing in the clear — it's **plaintext JSON over TLS** (no
+app-layer AES; `:10380` serves both plaintext and TLS by sniffing the first byte).
+Listing fields: `fileName`, `fileSize`, `savePath`, `mimeType`, `isDirectory`, …
+**Next:** grab the exact fm *request* body via a live TLS `POST` (the response
+format is known), then screen mirror on `:10381` (§5). Full detail in
+[`protocol/PROTOCOL.md`](protocol/PROTOCOL.md).
 
 ## Quick start
 

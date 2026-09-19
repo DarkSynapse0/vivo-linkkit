@@ -220,20 +220,31 @@ Multiple connect modes (from `app-connection.js` / `components-connection.js`):
     (the reverse channels — **VDFS = vivo Distributed File System** for file
     transfer, + a relay). So `5679`/`8904` aren't dummies: they're the file/relay
     transports, which is why the phone needs the PC listening there.
-  - **File manager:** `POST /pc_file_manager/channel` (list) +
-    `/pc_file_manager/download` + `/pc_file_manager/thumb?fileUri=…&width=…`; body
-    base `{category,data,fileCount:0,sortCondition,pageIndex:0,pageNumber:200,
-    firstFlag}`. Live to `:10380` it answers `{"error":"bad requestBody","status":
-    403}` to a plaintext body, and the official client's fm calls are NOT in the
-    plaintext `:10380` capture → the fm body is **AES-256-CBC encrypted** (client:
-    `aesKey=randomGenerate(16)`, `createCipheriv("aes-256-cbc",…)`; there is **no
-    `/exchange` endpoint** — that earlier match was the *Exchange* email logo).
-  - **Next milestone (harder):** recover the AES session key derivation and body
-    format. Most reliable route: relaunch Office Kit in the VM with
-    `SSLKEYLOGFILE` set, browse files, and decrypt its `:10381`/fm traffic to read
-    the exact encrypted-body scheme — rather than reversing the minified crypto.
-    (`/base-info` reported `isFmHasPermission:false` — a phone-side grant may also
-    be required.)
+  - **File manager = plaintext JSON over TLS on `:10380` (DECRYPTED, 2026-09-19 —
+    corrects the earlier "AES-256 body" guess).** `:10380` serves **both**
+    plaintext (base-info/version/ws) **and** TLS — the phone sniffs the first byte
+    (`0x16`→TLS). The fm requests use the **TLS** side, which is why our *plaintext*
+    `POST /pc_file_manager/channel` got `"bad requestBody"`. There is **no
+    app-layer AES** — TLS is the only encryption. Method: `SSLKEYLOGFILE` on
+    Office Kit (it honours it) + a usbmon capture, demux the ADB streams
+    (`scripts/vm/decrypt_usb_tls.py` → synthetic pcap), `tshark -o tls.keylog_file`.
+    Decrypted **file-listing response** shape (`Server: PcSuite-HTTP`, also a
+    `WeiChuan-HTTP` sub-server):
+    ```json
+    {"dataList":[{"dataList":{"<Category> | <Sub>":[
+      {"dirName":"Download","fileName":"pcsuite.apk","fileSize":27148116,
+       "mimeType":"application/vnd.android.package-archive","isDirectory":false,
+       "savePath":"/storage/emulated/0/Download/pcsuite.apk","date":…,"duration":0,
+       "isLivePhoto":false,"childrenSize":0,"id":0}]}}]}
+    ```
+    Decrypted **`/version`** request body (fuller than §8's): `{version,
+    connBaseVersionCode,pcSuiteVersionCode,timestamp,connectionId,pcDeviceId,
+    isAutoConnect,token,isOversea:true,pcOsType:"win32",pcOsVersion}`.
+  - **Only remaining detail:** the exact fm *request* body (my ADB reassembly
+    loses the client→server direction on keep-alive connections). Get it via a
+    live TLS `POST` to `:10380` (unverified cert, `rejectUnauthorized:false` like
+    the client) once the phone is on host adb — the response format above is known.
+    (`isFmHasPermission:false` in `/base-info` may gate some ops with a phone grant.)
 - **`getPhone` response (VERIFIED):** `data` is a JSON *string* →
   ```json
   {"deviceType":"phone","bleId":"<6-digit>","openId":"<64-hex device openId>",
