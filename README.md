@@ -1,7 +1,7 @@
 # vivo-linkkit
 
 Clean-room interoperability client for vivo Office Kit / PC Suite on Linux —
-reverse-engineering the phone↔PC protocol (pairing, mirroring, file transfer) and
+reverse-engineering the phone↔PC protocol (pairing, file transfer, mirroring) and
 reimplementing it, scrcpy-style. No vendor binaries.
 
 <!-- GitHub "About" → use the line above. Topics: reverse-engineering,
@@ -14,106 +14,129 @@ reimplementing it, scrcpy-style. No vendor binaries.
 > [scrcpy](https://github.com/Genymobile/scrcpy) and
 > [libimobiledevice](https://libimobiledevice.org/).
 
-## Status
+## Status: a working, cloud-free file-transfer client
 
-🟢 **Phase 1 complete + Phase 2 account-auth working; into Phase 3 (device
-protocol decoded).** The pivotal question is **answered**: pairing is
-**vivo-account based** — no embedded secret — so the tool is **distributable** by
-driving the user's *own* login.
+From Linux, over a USB cable, `vivolinkkit` connects to the phone and **lists,
+downloads, and previews files** — clean-room, no vivo cloud call, no vendor
+secret, no on-screen confirmation:
 
-The protocol was first read from the Electron client's plaintext JS, then
-**live-verified** in a Windows 11 instrumentation VM (QEMU/KVM) with mitmproxy
-(cloud/account traffic) and usbmon (the USB pipe) — **no Frida**. Live capture
-also *corrected* several decompile-era guesses. What's now evidence-verified:
-
-- **Account auth (P2 — working in our client):** passport web login → the
-  `getHtml` hidden input carries the token inline (positional `&`-fields;
-  field[1] = token). Authenticated gateway calls send **`openId` + `token`**
-  headers (no exchange call, no signature). `getUserInfo` returns 200. See
-  `src/vivolinkkit/login.py`.
-- **Rendezvous:** cloud `scan/sid` → `getPhone` returns the phone's
-  `ip`/`connectionId`/`bleId`.
-- **USB transport = ADB:** the PC injects the connect token via
-  `am startservice … com.vivo.pcsuite/.service.AdbPortalService --es token`, then
-  `adb forward tcp:10380/10381` + `adb reverse tcp:5679/8904`.
-- **Device control:** plaintext **HTTP** to the phone's **`PcSuite-HTTP`** server
-  on `:10380`, authed with the **`newToken`** header (`POST /version` →
-  `{"code":"0000",…}`).
-- **Media:** **TLS 1.2** on `:10381` (self-signed `CN=vivo` cert); H.264/H.265
-  video rides inside it.
-- **Trust model:** the connect **token is PC-minted** (`crypto.randomBytes(32)`,
-  one per connection, never seen cloud-side) — **KDE-Connect-style local trust**,
-  not a cloud credential. The phone trusts it because the account `openid` proves
-  *same-account*. ⇒ a **cloud-free USB connect is feasible**.
-
-**Phase 3 — cloud-free USB connect PROVEN.** A clean-room client
-([`src/vivolinkkit/connect_usb.py`](src/vivolinkkit/connect_usb.py)) drives adb
-from Linux with a **self-minted** token and the phone accepts it —
-`POST /base-info` → `{"code":"0000", …device info…}`. **No vivo cloud call, no
-on-screen confirmation, no pairing** (a random `pcDeviceId` works; the trust is
-purely the same-account `openid` + our PC-minted token). The one non-obvious
-requirement: the PC must hold reverse listeners on `5679`/`8904` open, then
-`adb forward 10380` and `POST /base-info` first. This confirms the whole thesis:
-a distributable, secret-free, cloud-free client is possible.
-
-The **control plane is plaintext** and already readable with our token:
-`connect_usb.py --watch` opens `ws://<phone>:10380/ws/heart-beat` (auth = the WS
-subprotocol `v1.hc.vivo.com.cn, <token>`) and streams events —
-`UPDATE_DEVICE_INFO:{…}`, `RE_CONNECT_ALBUM:{…}`, `{"state":"normal"}`. So file
-listing, input, and notifications ride this clear channel; only the video/bulk
-media needs the `:10381` TLS.
-
-Port map: `10380` control HTTP **+ TLS** + ws, `10381` screen mirror (video, TLS),
-`5679`/`8904` reverse channels (**VDFS** file transfer + relay). **File browsing
-works end-to-end in our client** — `connect_usb.py --list images,videos,docs`
-lists real files off the phone (name/size/path), cloud-free with a self-minted
-token:
-
-```
-$ python -m vivolinkkit.connect_usb --list images,videos
-[files:images] … 200 files: Screenshot_2026_0918_230722.png, IMG_20260918…jpg, …
-[files:videos] …  64 files: video_20260911_164804.mp4 (169 MB), …
+```console
+$ python -m vivolinkkit.connect_usb --list images,videos --grab images:2 --thumbs images:5
+[connect] ✅ phone accepted our self-minted token — cloud-free USB connect works
+[files:images]  200 files: Screenshot_2026_0918_230722.png, IMG_20260918_201539.jpg, …
+[files:videos]   64 files: video_20260911_164804.mp4 (169 MB), …
+[grab:images]   downloading 2 files → captures/downloads/   (byte-exact PNG/JPEG ✓)
+[thumbs:images] 5 × 144×144 preview PNGs → captures/downloads/thumbs/
 ```
 
-**File download + thumbnails work too** — `connect_usb.py --grab images:3,videos:1`
-pulls real files to `captures/downloads/` (verified byte-exact PNG/JPEG/MP4) via
-`GET /download/down_files?path=…`, and `--thumbs images:5` fetches 144×144 preview
-PNGs. (Clipboard + notifications, like screen mirror, turned out to be native —
-`vivoSyncService.exe`, MQTT+protobuf — so they're separate native sub-projects.) The listing API is
-`POST /pc_file_manager/channel` over TLS (`:10380` sniffs the first byte:
-`0x16`→TLS); the body's `type` field (`REQUEST_POSTS_IMAGELIST`, etc.) was the
-last missing piece. Decryption used `SSLKEYLOGFILE` + a usbmon capture +
-`scripts/vm/decrypt_usb_tls.py` (reorders the ADB-tunnelled TLS records so tshark
-decrypts both directions).
+**The pivotal question — how is pairing authenticated? — is answered:** it's
+**local trust over a user account**. The PC mints its own random session token
+(`crypto.randomBytes(32)`) and hands it to the phone; the phone accepts it because
+the account `openid` proves the two are the *same vivo account*. No embedded
+credential, no cloud token issuance. So a fully **distributable, secret-free,
+cloud-free** client is possible — and proven.
 
-**Screen mirroring is a separate, native sub-project.** Unlike the JSON/HTTP
-services, the video path is compiled native (`VivoExtScreen.exe` +
-`PcsuiteConnectSDK.dll`, Poco C++ WebSocket + FFmpeg); `:10381` uses native TLS
-(so `SSLKEYLOGFILE` won't help) and only opens after a native `/ext/control`
-handshake. The realistic route is **Frida** instrumentation of those binaries in
-the VM (per this repo's "native ⇒ Frida" note) to dump the handshake + H.264/HEVC
-framing, then reimplement + decode with PyAV. Scoped in
-[`protocol/PROTOCOL.md`](protocol/PROTOCOL.md) §6.
+## How it works
+
+The protocol was first read from the official Electron client's plaintext JS,
+then **live-verified** in a Windows 11 instrumentation VM (QEMU/KVM) with
+mitmproxy (account/cloud traffic), usbmon (the USB pipe), and `SSLKEYLOGFILE` TLS
+decryption. Live capture corrected several decompile-era guesses. What's
+evidence-verified and reimplemented:
+
+1. **Account login** (`src/vivolinkkit/login.py`) — drive the user's *own* vivo
+   passport login; the post-login `getHtml` page carries the token inline
+   (positional `&`-fields). Authenticated account-gateway calls send `openId` +
+   `token` headers (no exchange, no signature) → `getUserInfo` 200.
+2. **USB transport = ADB.** The PC injects its self-minted token into the phone
+   via `adb … am startservice … com.vivo.pcsuite/.service.AdbPortalService --es
+   token`, sets up `adb forward 10380/10381` + `adb reverse 5679/8904`, and the
+   phone binds its local HTTP server (only while the PC holds the reverse
+   channels open).
+3. **Connect handshake.** `POST /base-info` on `:10380` with the account `openid`
+   + our token → `{"code":"0000", …device info…}`. No pairing, no confirm dialog
+   (a *random* `pcDeviceId` works — device identity isn't checked).
+4. **Control plane.** A plaintext WebSocket `ws://<phone>:10380/ws/heart-beat`
+   (auth is the WS subprotocol `v1.hc.vivo.com.cn, <token>`) streams events
+   (`UPDATE_DEVICE_INFO`, `RE_CONNECT_ALBUM`, heartbeats) — `connect_usb.py --watch`.
+5. **File services** over TLS on `:10380` (the port sniffs the first byte:
+   `0x16`→TLS, else plaintext): `POST /pc_file_manager/channel` (list, body `type`
+   = `REQUEST_POSTS_IMAGELIST|VIDEOLIST|…`), `GET /download/down_files?path=…`
+   (download), `GET /pc_file_manager/thumb?fileUri=…` (thumbnails).
+
+**Port map:** `10380` control HTTP + TLS + ws · `10381` screen mirror (video, TLS)
+· `5679`/`8904` reverse channels (VDFS file transfer + relay). Full spec:
+[`protocol/PROTOCOL.md`](protocol/PROTOCOL.md).
+
+## Two tiers — what's done, what's native
+
+The protocol splits cleanly. Everything that was **readable JSON/HTTP** in the JS
+bundle is reimplemented and working; the rest lives in **compiled native
+binaries** and is a separate reverse-engineering effort (needs Frida / protobuf
+reversing, not JS-grepping).
+
+| Feature | Tier | Status |
+|---|---|---|
+| Account auth · cloud-free USB connect | JSON/HTTP | ✅ working |
+| Control websocket | JSON/WS | ✅ working (`--watch`) |
+| File **list · download · thumbnails** | JSON/HTTP | ✅ working |
+| File **upload** (PC→phone) | VDFS (`5679`/`8904`) | ⬜ native tier |
+| **Clipboard · notifications** | native `vivoSyncService` (MQTT + protobuf) | ⬜ native tier |
+| **Screen mirror** | native `VivoExtScreen` (Poco WS + FFmpeg) | ⬜ native tier |
 
 ## Quick start
 
+Requirements: Linux + `adb`, a vivo phone with USB debugging enabled, and Python
+(a venv is created by the bootstrap script).
+
 ```sh
-scripts/bootstrap.sh          # install host deps, create the venv
-recon/01_inventory.sh         # device identity + candidate packages + open ports
-recon/02_decompile.sh <pkg>   # pull & decompile the phone agent, grep for signals
-recon/03_capture.sh           # usbmon / network / port-sweep captures
-
-# Account login (P2) — drive your OWN vivo login, verify the gateway token:
-PYTHONPATH=src .venv/bin/python -m vivolinkkit.login --region in
-
-# Live instrumentation VM (to observe the official client & the USB pipe):
-sudo bash scripts/vm/00_host_prereqs.sh    # libvirt + NAT (once; then re-login)
-bash scripts/vm/10_create_vm.sh            # Win11 guest (UEFI+TPM, USB passthrough)
-sudo bash scripts/vm/31_capture_usb.sh     # capture the phone<->PC USB (ADB) pipe
+scripts/bootstrap.sh                       # host deps + venv
 ```
 
-See [`scripts/vm/README.md`](scripts/vm/README.md) for the mitmproxy + USB
-capture workflow, and keep filling in `protocol/PROTOCOL.md`.
+**1 — log into your own vivo account** (one-time, to obtain the account `openid`;
+opens a real browser, drives *your* login, stores nothing but the token locally):
+
+```sh
+PYTHONPATH=src .venv/bin/python -m vivolinkkit.login --region in
+```
+
+**2 — plug the phone in (USB debugging authorized) and use it:**
+
+```sh
+PYTHONPATH=src .venv/bin/python -m vivolinkkit.connect_usb \
+    --list images,videos,docs \      # browse the phone
+    --grab images:3,videos:1 \       # download → captures/downloads/
+    --thumbs images:5 \              # preview thumbnails
+    --watch 10                       # stream control-plane events
+```
+
+File kinds: `images videos audio docs webdocs files home`. Downloads and
+thumbnails land in `captures/downloads/` (gitignored).
+
+### Instrumentation (for extending the protocol)
+
+The Windows 11 VM + capture tooling used to observe the official client:
+
+```sh
+sudo bash scripts/vm/00_host_prereqs.sh    # libvirt + NAT (once; then re-login)
+bash scripts/vm/10_create_vm.sh            # Win11 guest (UEFI+TPM, USB passthrough)
+sudo bash scripts/vm/31_capture_usb.sh     # capture the phone↔PC USB (ADB) pipe
+python  scripts/vm/decrypt_usb_tls.py      # reassemble + decrypt the tunnelled TLS
+```
+
+See [`scripts/vm/README.md`](scripts/vm/README.md) for the mitmproxy + usbmon +
+`SSLKEYLOGFILE` capture workflow.
+
+## Layout
+
+```
+src/vivolinkkit/login.py         drive the user's vivo login → account token
+src/vivolinkkit/connect_usb.py   cloud-free USB connect + file list/download/thumbs
+protocol/PROTOCOL.md             the living spec (the heart of the project)
+scripts/vm/                      Win11 instrumentation VM + capture/decrypt tooling
+recon/                           device inventory, APK decompile, capture helpers
+captures/                        gitignored — raw dumps, decompiled output, secrets
+```
 
 ## Roadmap
 
@@ -121,10 +144,10 @@ capture workflow, and keep filling in `protocol/PROTOCOL.md`.
 |------|------|------|
 | **P0** Recon & setup | Real data on the wire, not guesses | ✅ done |
 | **P1** Protocol map | Answer the pairing question; fill `PROTOCOL.md` | ✅ done |
-| **P2** Exploration client | Account login (200) + cloud-free USB connect proven (`code 0000`) | 🟢 core done |
-| **P3** Real client | Read `:10381` TLS → mirroring + file transfer + input | 🟡 next |
-| **P4** Services | File transfer, clipboard, notifications | ⬜ |
-| **P5** Packaging | PKGBUILD → AUR; broaden device support | ⬜ |
+| **P2** Auth & connect | Account login + cloud-free USB connect (`code 0000`) | ✅ done |
+| **P3** File client | List + download + thumbnails, working & clean-room | ✅ done |
+| **P4** Native tier | Upload (VDFS), clipboard/notifications, screen mirror (Frida) | ⬜ next |
+| **P5** Packaging | CLI polish, PKGBUILD → AUR, broaden device support | ⬜ |
 
 See the full [roadmap PDF](vivo-linkkit-ROADMAP.pdf) for detail.
 
@@ -143,8 +166,8 @@ We keep it clean:
 - **Clean-room discipline.** We implement from the *documented protocol*, not by
   transliterating decompiled code. Decompiled code informs the spec; the spec
   informs the source.
-- **No shipped vendor secrets.** If pairing requires a vivo credential, we drive
-  the user's own account login instead of embedding one.
+- **No shipped vendor secrets.** Pairing uses the user's own account login and a
+  session token the client generates itself — never an embedded vivo credential.
 
 *This is not legal advice.*
 
