@@ -91,9 +91,9 @@ reversing, not JS-grepping).
 | Account auth · cloud-free USB connect | JSON/HTTP | ✅ working |
 | Control websocket | JSON/WS | ✅ working (`--watch`) |
 | File **list · download · thumbnails** | JSON/HTTP | ✅ working |
+| **Screen mirror** (phone→PC) | Cast SDK ws `/mirror/screen` (H.264) — **protocol fully mapped** | 🟡 needs consent + decoder |
 | File **upload** (PC→phone) | VDFS (`5679`/`8904`) | ⬜ native tier |
 | **Clipboard · notifications** | native `vivoSyncService` (MQTT + protobuf) | ⬜ native tier |
-| **Screen mirror** | native `VivoExtScreen` (Poco WS + FFmpeg) | ⬜ native tier |
 
 ## Quick start
 
@@ -171,8 +171,11 @@ See the full [roadmap PDF](vivo-linkkit-ROADMAP.pdf) for detail.
 
 The protocol map in [`protocol/PROTOCOL.md`](protocol/PROTOCOL.md) is the heart of
 the project — published early on purpose, to recruit collaborators. The most
-valuable next work is the **native tier** (screen mirror, VDFS upload, clipboard):
-see §6 for the Frida approach. Please keep the [clean-room
+valuable next work is **screen mirroring** — the phone→PC path is the vivo Cast
+SDK (`com.vivo.castsdk`, decompiled from the phone), a WebSocket `/mirror/screen`
+streaming H.264 on the same `:10380` server; the protocol is fully mapped in §6,
+and what's left is triggering the Android screen-capture consent within our
+session and decoding the frames (PyAV). Please keep the [clean-room
 discipline](#interoperability-statement) — implement from the spec, never from
 transliterated decompiled code.
 

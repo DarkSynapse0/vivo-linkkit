@@ -374,22 +374,38 @@ wrapped (RSA/`createRequestSign`) on top of TLS.
 
 ## 6. Session messages
 
-- **Screen mirroring — scoped 2026-09-19 (NATIVE; not JS).** Two modes:
-  **VivoScreen** (phone → PC) and **ExtendedScreen** (PC → phone second display).
-  Unlike everything else, the video path is **compiled native**: `VivoExtScreen.exe`
-  + `PcsuiteConnectSDK.dll`, built on **Poco C++ WebSocket** + **FFmpeg**
-  (avcodec-58), with `DxgiScreenCapturer` (captures the *PC* screen → encodes for
-  ExtendedScreen). Endpoints `/ext/control` + `/ext/screen`. Key facts:
-  - The phone's **`:10381` mirror port is NOT open until a native handshake starts
-    it** (verified: `:288D` absent from the phone tcp table after connect).
-  - `:10381` is **native TLS** — the `SSLKEYLOGFILE` trick that decrypted the fm
-    (§1) does **not** apply (those keys are Node's; these are the native stack's).
-  - So the start-handshake, wire framing, and codec params can't be read from the
-    JS bundle. **Realistic path = Frida** (per CLAUDE.md's "native ⇒ Frida"): hook
-    Poco `WebSocket::sendFrame/receiveFrame` + `avcodec_send_packet`/
-    `avcodec_receive_frame` in the VM to dump the plaintext `/ext/control`
-    handshake + H.264/HEVC packetization, then reimplement + decode with PyAV.
-  - This is a **distinct sub-project** (native RE), unlike the JSON/HTTP services.
+- **Screen mirroring — FULLY MAPPED from the phone's Java (2026-09-19; corrects
+  the earlier "native/Frida" scoping).** There are two *different* directions:
+  - **PC → phone extended screen** = native `VivoExtScreen.exe` (Poco WS + FFmpeg,
+    `DxgiScreenCapturer` captures the *PC* screen, endpoints `/ext/control` +
+    `/ext/screen`). That one is native and would need Frida — but it's the *less*
+    interesting direction.
+  - **Phone → PC mirror** (the phone's screen on the PC — what you actually want)
+    is the **vivo Cast SDK `com.vivo.castsdk`**, decompiled from the phone's
+    `com.vivo.pcsuite` APK (`recon/02_decompile.sh com.vivo.pcsuite`) — **readable
+    Java**, on the **same Netty `:10380` HTTP server** as the file manager.
+    Routes (`HttpServerInitializer`): `/mirror/screen`, `/mirror/control`,
+    `/mirror/device_size`, `/mirror/app_screens`.
+  - **`/mirror/screen` protocol (VERIFIED from source):** it's a **WebSocket**
+    (`WebSocketServerProtocolHandler("/mirror/screen","v1.hc.vivo.com.cn",…)` →
+    `ImplScreenController`) — same subprotocol-token auth as the heartbeat ws (§1).
+    Flow: PC sends text `SCREEN_START:{SessionReq}`; phone replies
+    `DEVICE_INFO:{…}` then streams **`BinaryWebSocketFrame` = H.264/HEVC** (first
+    binary = SPS/PPS config). `SessionReq` fields: `bit_rate, mime_type("video/avc"
+    |"video/hevc"), max_size, video_width, video_height, device_type, mirror_type,
+    no_audio, split_frame, show_touch_spot, support_drag, pc_version, …`. Encoder:
+    `ScreenCaptureManager` + `MediaCodec` (CBR, configurable bitrate/fps/IDR) over
+    a `MediaProjection` `VirtualDisplay`. `/mirror/control` is a second ws for
+    input (`ImplKeyEventController`); `/mirror/device_size` returns screen dims.
+  - **The one gate = Android screen-capture consent.** `/mirror/screen` won't
+    stream until `MediaProjection` is granted: `MediaProjectionActivity`
+    (`createScreenCaptureIntent()`) shows the system "Start casting?" dialog, and
+    the grant flows to `MirrorService.initMediaProjection(CODE, DATA)`. This is a
+    mandatory user consent (not bypassable) and is wired into the official session
+    — launching the Activity bare via `am start` throws, so the trigger needs the
+    proper connect context. **Remaining to build:** trigger the consent within our
+    session, then open `/mirror/screen`, and decode the H.264 frames with PyAV
+    (a scrcpy-style first-frame). No Frida, no native TLS — it's a ws + a decoder.
 - **Input:** cross-device keyboard/mouse — `keyboardMouseCoordinationServer`.
 - **File transfer:** Vdfs (`VdfsClient`/`VdfsWsMsg`,
   `CONNECT_ROUTER.vdfsApplicationClient`) + the HTTP file APIs in §2.
