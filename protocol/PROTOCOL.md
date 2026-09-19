@@ -398,14 +398,29 @@ wrapped (RSA/`createRequestSign`) on top of TLS.
     a `MediaProjection` `VirtualDisplay`. `/mirror/control` is a second ws for
     input (`ImplKeyEventController`); `/mirror/device_size` returns screen dims.
   - **The one gate = Android screen-capture consent.** `/mirror/screen` won't
-    stream until `MediaProjection` is granted: `MediaProjectionActivity`
-    (`createScreenCaptureIntent()`) shows the system "Start casting?" dialog, and
-    the grant flows to `MirrorService.initMediaProjection(CODE, DATA)`. This is a
-    mandatory user consent (not bypassable) and is wired into the official session
-    — launching the Activity bare via `am start` throws, so the trigger needs the
-    proper connect context. **Remaining to build:** trigger the consent within our
-    session, then open `/mirror/screen`, and decode the H.264 frames with PyAV
-    (a scrcpy-style first-frame). No Frida, no native TLS — it's a ws + a decoder.
+    stream until `MediaProjection` is granted via the system "Start casting?"
+    dialog (mandatory, not bypassable). **Full trigger sequence (reverse-engineered
+    from `WebSocketController`):**
+    1. `POST /version` with `version:"6.8.2"`, `isOversea:true`, `pcOsType/…` —
+       this sets the phone-side PC version (`CastSource.setVersion`). Required:
+       the trigger's `isSupportScreenCapture()` = *PC version ≥ 3.4.9*; skip
+       `/version` and the phone **silently refuses** to show the dialog.
+    2. `POST /base-info` (as usual).
+    3. Over the **`/ws/heart-beat`** ws (the same one `--watch` opens), send the
+       text `"CONTINUE_OPEN_SCREEN:"` (exactly the constant, empty payload →
+       `substring(21)==""` → launch). `WebSocketController` launches
+       `MediaProjectionActivity` → the "Start casting?" dialog.
+    4. User taps Allow → `MirrorService.initMediaProjection(CODE,DATA)` → the cast
+       server (`HttpServerInitializer`, `OptionalSslHandler`+`TokenCheckController`)
+       **binds on `:10180`** (`CastSourceConfig.port`).
+    5. `adb forward 10180`; open `ws :10180/mirror/screen` (subprotocol
+       `v1.hc.vivo.com.cn,<token>`); send `SCREEN_START:{SessionReq}`; read the
+       `DEVICE_INFO:` reply then the H.264 `BinaryWebSocketFrame`s; decode (PyAV).
+  - **Status:** the whole sequence is coded (`scripts/vm/mirror_prototype.py`) and
+    verified step-by-step against the source; a live frame wasn't captured because
+    the phone's `:10380` bind became flaky after many connect cycles (needs a
+    phone reboot / a clean Office Kit connect to reset). No Frida, no native TLS —
+    it's a ws + a decoder, blocked only on connect reliability + the user consent.
 - **Input:** cross-device keyboard/mouse — `keyboardMouseCoordinationServer`.
 - **File transfer:** Vdfs (`VdfsClient`/`VdfsWsMsg`,
   `CONNECT_ROUTER.vdfsApplicationClient`) + the HTTP file APIs in §2.
