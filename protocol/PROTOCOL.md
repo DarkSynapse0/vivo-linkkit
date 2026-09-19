@@ -192,6 +192,19 @@ Multiple connect modes (from `app-connection.js` / `components-connection.js`):
   mint our own token, `adb forward 10380`, `POST /base-info` with the account
   `openid` (proves same-account) + our token. Cloud is only needed for the
   account login (openid) and, on the Wi-Fi path, rendezvous.
+- **PoC findings (2026-09-19, `src/vivolinkkit/connect_usb.py`):** driving this
+  from Linux adb with a **self-minted** token —
+  - `am startservice … AdbPortalService --es token <ours>` starts the service
+    with **no on-screen confirmation** (launcher stays focused) → USB-access
+    trust confirmed at the service level.
+  - The phone binds its **`:10380` server ONLY after the PC hosts the reverse
+    channels** `adb reverse tcp:5679` / `tcp:8904` (no PC listener → `:10380`
+    never comes up; add listeners → it binds in ~1 s). New, verified dependency.
+  - **Still blocked:** `:10380` then accepts the TCP connect but **closes
+    `/version`|`/base-info` without a response** — the reverse channels need a
+    real handshake (likely TLS/custom framing), not a bare accept. Next: decode
+    the 8904/5679 reverse-stream bytes from `captures/pipe/phone-usb-bus3-*.pcap`
+    (the official connect) and speak that protocol.
 - **`getPhone` response (VERIFIED):** `data` is a JSON *string* →
   ```json
   {"deviceType":"phone","bleId":"<6-digit>","openId":"<64-hex device openId>",

@@ -46,10 +46,15 @@ also *corrected* several decompile-era guesses. What's now evidence-verified:
   not a cloud credential. The phone trusts it because the account `openid` proves
   *same-account*. ⇒ a **cloud-free USB connect is feasible**.
 
-**Next (Phase 3):** prove the cloud-free USB path (mint token → `adb forward
-10380` → `POST /base-info {openid, token}` offline); decrypt the `:10381` TLS to
-read the wire framing/video; then a minimal Python client. Full detail, with the
-corrected findings, in [`protocol/PROTOCOL.md`](protocol/PROTOCOL.md).
+**Phase 3 in progress:** a cloud-free USB connect PoC
+([`src/vivolinkkit/connect_usb.py`](src/vivolinkkit/connect_usb.py)) drives adb
+from Linux with a **self-minted** token. Verified: `AdbPortalService` starts with
+**no on-screen confirmation** (USB-access trust), and the phone binds its
+`:10380` server once the PC hosts the reverse channels (`5679`/`8904`). Remaining
+blocker: `:10380` closes `/base-info` without a response until those reverse
+channels speak their real handshake — next is decoding them from the usbmon
+capture, then reading the `:10381` TLS. Full detail in
+[`protocol/PROTOCOL.md`](protocol/PROTOCOL.md).
 
 ## Quick start
 
