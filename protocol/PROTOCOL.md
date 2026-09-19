@@ -361,13 +361,22 @@ wrapped (RSA/`createRequestSign`) on top of TLS.
 
 ## 6. Session messages
 
-- **Screen mirroring:** two modes — **VivoScreen** (phone → PC,
-  `VivoScreenServer`) and **ExtendedScreen** (second display,
-  `ExtendedScreenServer`); auth via `extScreenCheckAuthority()`; control frames
-  `RES_START_EXTSCREEN`, `NOTIFY_SCREEN_SHOT_SYNC`. Video is decoded by the
-  bundled **FFmpeg** in `VivoExtScreen.exe` → **H.264/H.265** (confirms P2 is
-  feasible). Resolution from `device.screenWidth/screenHeight`. Exact codec &
-  packetization on the wire: `TODO` (live capture).
+- **Screen mirroring — scoped 2026-09-19 (NATIVE; not JS).** Two modes:
+  **VivoScreen** (phone → PC) and **ExtendedScreen** (PC → phone second display).
+  Unlike everything else, the video path is **compiled native**: `VivoExtScreen.exe`
+  + `PcsuiteConnectSDK.dll`, built on **Poco C++ WebSocket** + **FFmpeg**
+  (avcodec-58), with `DxgiScreenCapturer` (captures the *PC* screen → encodes for
+  ExtendedScreen). Endpoints `/ext/control` + `/ext/screen`. Key facts:
+  - The phone's **`:10381` mirror port is NOT open until a native handshake starts
+    it** (verified: `:288D` absent from the phone tcp table after connect).
+  - `:10381` is **native TLS** — the `SSLKEYLOGFILE` trick that decrypted the fm
+    (§1) does **not** apply (those keys are Node's; these are the native stack's).
+  - So the start-handshake, wire framing, and codec params can't be read from the
+    JS bundle. **Realistic path = Frida** (per CLAUDE.md's "native ⇒ Frida"): hook
+    Poco `WebSocket::sendFrame/receiveFrame` + `avcodec_send_packet`/
+    `avcodec_receive_frame` in the VM to dump the plaintext `/ext/control`
+    handshake + H.264/HEVC packetization, then reimplement + decode with PyAV.
+  - This is a **distinct sub-project** (native RE), unlike the JSON/HTTP services.
 - **Input:** cross-device keyboard/mouse — `keyboardMouseCoordinationServer`.
 - **File transfer:** Vdfs (`VdfsClient`/`VdfsWsMsg`,
   `CONNECT_ROUTER.vdfsApplicationClient`) + the HTTP file APIs in §2.

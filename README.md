@@ -82,8 +82,16 @@ real files to `captures/downloads/` (verified byte-exact PNG/JPEG/MP4) via
 `0x16`→TLS); the body's `type` field (`REQUEST_POSTS_IMAGELIST`, etc.) was the
 last missing piece. Decryption used `SSLKEYLOGFILE` + a usbmon capture +
 `scripts/vm/decrypt_usb_tls.py` (reorders the ADB-tunnelled TLS records so tshark
-decrypts both directions). **Next:** screen mirror on `:10381` (§5). Full detail
-in [`protocol/PROTOCOL.md`](protocol/PROTOCOL.md).
+decrypts both directions).
+
+**Screen mirroring is a separate, native sub-project.** Unlike the JSON/HTTP
+services, the video path is compiled native (`VivoExtScreen.exe` +
+`PcsuiteConnectSDK.dll`, Poco C++ WebSocket + FFmpeg); `:10381` uses native TLS
+(so `SSLKEYLOGFILE` won't help) and only opens after a native `/ext/control`
+handshake. The realistic route is **Frida** instrumentation of those binaries in
+the VM (per this repo's "native ⇒ Frida" note) to dump the handshake + H.264/HEVC
+framing, then reimplement + decode with PyAV. Scoped in
+[`protocol/PROTOCOL.md`](protocol/PROTOCOL.md) §6.
 
 ## Quick start
 
