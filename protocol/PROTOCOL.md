@@ -165,12 +165,27 @@ Multiple connect modes (from `app-connection.js` / `components-connection.js`):
   4. Phone scans → resolves `sid` via cloud → learns PC IP + token → connects
      directly (§2/§5).
   → **QR pairing depends on vivo cloud + account reachability.**
-- **USB** — was assumed `/connect?active=usb` (direct, no cloud). **DISPROVEN by
-  live capture (2026-09-19):** with the phone on USB, Office Kit still ran the
-  **cloud rendezvous** `GET /vbusiness/scan/sid` → `POST /vbusiness/scan/getPhone`
-  and the phone returned its **Wi-Fi LAN IP** as the data endpoint. So the USB
-  cable triggers discovery, but the session rides the LAN, cloud-signalled — a
-  fully offline USB path was **not** observed in pcsuite 6.8.2.
+- **USB — transport is ADB.** *(VERIFIED by usbmon capture, 2026-09-19;
+  supersedes the "direct /connect?active=usb" guess AND an intermediate wrong
+  guess that USB rode the Wi-Fi LAN — it does not, the pipe is adb-tunnelled.)*
+  Office Kit's bundled **adb** talks to the phone's adb interface and:
+  1. `shell:am start -a vivo.intent.action.PCSUITE_INTENT` then
+     `shell:am startservice … -n com.vivo.pcsuite/.service.AdbPortalService
+      --es token '<newToken>' --es connectionId '<id>' --es pc_name '<host>'
+      --es user_name '<masked>' --es from 'pc'` — **the PC injects the connect
+     token into the phone over adb** (USB access ⇒ trust; no on-screen confirm
+     seen on this path).
+  2. `adb forward tcp:10380` / `tcp:10381` (PC→phone) and `adb reverse
+     tcp:5679` / `tcp:8904` (phone→PC) set up the channels.
+  3. **Control:** plaintext **HTTP** to the phone's **`PcSuite-HTTP`** server at
+     `127.0.0.1:10380` — `POST /version` (hdrs `newToken`, `version:6.8.2`,
+     `X-ES-HTTP-VERSION:1`, UA `axios/…`; body `{version,connBaseVersionCode,
+     pcSuiteVersionCode,timestamp,connectionId}`) → `{"code":"0000","data":{…}}`.
+  4. **Media/data:** **TLS 1.2** on `:10381` (self-signed `CN=vivo` cert, valid
+     to `99991231`) — the encrypted video (`ep4 IN`, no plaintext NALs) and data.
+  The cloud `scan/sid`+`getPhone` still ran alongside, but the actual pipe is
+  **local adb**; whether the `newToken` is cloud-issued or PC-minted (⇒ a
+  cloud-free USB path, KDE-Connect-style) is the next thing to pin.
 - **`getPhone` response (VERIFIED):** `data` is a JSON *string* →
   ```json
   {"deviceType":"phone","bleId":"<6-digit>","openId":"<64-hex device openId>",
@@ -323,8 +338,12 @@ app secret/key found** (only public RSA keys, §4) — clean-room-safe.
    mints the token: `GET {region}-passport…/v3/web/login/authorize?client_id=130&
    redirect_uri=https://{region}-psuite…/vbusiness/account/cookie/getHtml&type=1&
    theme=light&lang=en_US` → 302 → `getHtml?openid=…` (the hidden-input page).
-   `newToken`/`getConnectToken()` remain TODO for the device/wss connect payload
-   — verify against a phone-connected capture.
+   **`newToken` RESOLVED (2026-09-19):** it *is* used, but only on the **device
+   pipe** — the PC injects it into the phone via `adb … am startservice --es
+   token '<newToken>'` and sends it as the `newToken:` header to the phone's
+   `PcSuite-HTTP` server (§1, USB). The account gateway (`in-psuite`) uses
+   `openId`+`token`; the device gateway (phone `:10380`) uses `newToken`. Still
+   open: is `newToken` cloud-issued or PC-minted?
 5. **Gateway hosts (region-selected):** `pcsuite-api.vivo.com` (CN);
    `asia-/in-/eu-/ru-/de-gdpr-pcsuite-api.vivoglobal.com` (global). Device
    register/scan: `/scan/sid` → `/scan/getPhone` (§1). `connection-center.vivo.com.cn`
