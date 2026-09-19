@@ -143,7 +143,7 @@ def parse_credentials(hidden_value: str) -> dict:
     return creds
 
 
-def capture_login(login_url: str, timeout_s: float = 300.0) -> dict:
+def capture_login(login_url: str, gateway: str = "", timeout_s: float = 300.0) -> dict:
     """Open a browser, let the user log in, capture the redirect credentials.
 
     Returns the parsed credential dict (expects at least openid + vivoToken).
@@ -217,6 +217,29 @@ def capture_login(login_url: str, timeout_s: float = 300.0) -> dict:
                 }
             except Exception:  # noqa: BLE001
                 pass
+
+            # Exchange the token FROM the authenticated browser session so the
+            # session cookies (incl. JSESSIONID) are sent natively, exactly like
+            # the client. Headers replicate the requestBranch instance (module 277:
+            # openId/token/source=2/version/deviceId/countryCode) plus the Cy sign
+            # set as a harmless superset.
+            if gateway:
+                openid = find_openid(captured)
+                ts = int(time.time() * 1000)
+                hdrs = {
+                    "openId": openid, "token": "", "source": "2",
+                    "version": APP_VERSION, "deviceId": get_device_id(),
+                    "countryCode": (captured.get("_cookies") or {}).get(
+                        "vivo_account_cookie_iqoo_regioncode", "IN"),
+                    "timestamp": str(ts), "sign": request_sign(ts), "model": "win",
+                    "systemVersion": SYSTEM_VERSION, "appVersion": APP_VERSION,
+                }
+                try:
+                    r = context.request.post(gateway + TOKEN_PATH, headers=hdrs, data="")
+                    captured["_token_status"] = r.status
+                    captured["_token_body"] = r.text()[:2000]
+                except Exception as e:  # noqa: BLE001
+                    captured["_token_error"] = f"{type(e).__name__}: {e}"
         browser.close()
 
     if not captured:
@@ -302,7 +325,8 @@ def main() -> None:
         account_host, args.client_id, redirect_uri, args.lang)
     print(f"[login] region={args.region}  account={account_host}  gateway={gateway}")
 
-    creds = capture_login(login_url)
+    print(f"[login] token exchange (in-session) at {gateway}{TOKEN_PATH}")
+    creds = capture_login(login_url, gateway)
     AUTH_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     (AUTH_DIR / f"login-raw-{stamp}.json").write_text(json.dumps(creds, indent=2))
@@ -318,17 +342,21 @@ def main() -> None:
         raise SystemExit("[login] captured redirect but no openid — inspect the "
                          f"raw dump in {AUTH_DIR} and adjust the flow.")
 
-    print(f"[login] exchanging for newToken at {gateway}{TOKEN_PATH} …")
-    resp = exchange_token(gateway, creds)
-    (AUTH_DIR / "token.json").write_text(json.dumps(resp, indent=2))
+    status = creds.get("_token_status")
+    body = creds.get("_token_body", creds.get("_token_error", ""))
+    resp = {}
+    try:
+        resp = json.loads(body) if body else {}
+    except json.JSONDecodeError:
+        pass
+    (AUTH_DIR / "token.json").write_text(json.dumps(
+        {"status": status, "response": resp or body}, indent=2))
     token = resp.get("token") or (resp.get("data") or {}).get("token")
     if token:
         print("[login] SUCCESS — newToken obtained. Saved to captures/auth/token.json. "
               "Use it as the 'newToken' header on gateway calls (PROTOCOL.md §8).")
     else:
-        status = resp.get("_http_status", "200/other")
-        body = (resp.get("_body") or json.dumps(resp))[:400]
-        print(f"[login] no token yet — HTTP {status}. Response snippet:\n  {body}")
+        print(f"[login] no token yet — HTTP {status}. Response snippet:\n  {str(body)[:400]}")
 
 
 if __name__ == "__main__":
