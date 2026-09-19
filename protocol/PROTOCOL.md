@@ -214,17 +214,26 @@ Multiple connect modes (from `app-connection.js` / `components-connection.js`):
     `UPDATE_DEVICE_INFO:{"mobileDeviceId":…}`, `RE_CONNECT_ALBUM:{"auth":1,…}`,
     `{"state":"normal"}`. This is the §3 framing, in the clear — only the
     **`:10381` TLS** carries the video/bulk media. (`connect_usb.py --watch`.)
-  - **File manager (:10380 HTTP):** `POST /pc_file_manager/channel` (list),
-    `/pc_file_manager/download`, `/pc_file_manager/thumb?fileUri=…&width=…`. Body
-    base = `{category,data,fileCount:0,sortCondition,pageIndex:0,pageNumber:200,
-    firstFlag}`. Live test: the endpoint answers but returns
-    `{"error":"bad requestBody","status":403}` to a *plaintext* body → the body
-    is **AES-256 encrypted** (§4). The client has `aes-256-cbc` +
-    `createCipheriv`/`createDecipheriv` and a **`/exchange`** endpoint (and
-    `/wifikey`) — the PC-generated key/iv is handed to the phone there. **Next
-    milestone:** implement the `/exchange` key handshake (§4), then the file/
-    control bodies decrypt/encrypt and features (list/transfer) open up. `/base-
-    info` also reported `isFmHasPermission:false` — may need a phone-side grant.
+  - **Port map (VERIFIED, from the client's `defaultConfig`):**
+    `connectionServerPort:10380` (control HTTP + the ws), `mirrorServcerPort:10381`
+    (**screen mirror / video**, TLS), `VDFS_PC_PORT:5679` and `RELAY_PC_PORT:8904`
+    (the reverse channels — **VDFS = vivo Distributed File System** for file
+    transfer, + a relay). So `5679`/`8904` aren't dummies: they're the file/relay
+    transports, which is why the phone needs the PC listening there.
+  - **File manager:** `POST /pc_file_manager/channel` (list) +
+    `/pc_file_manager/download` + `/pc_file_manager/thumb?fileUri=…&width=…`; body
+    base `{category,data,fileCount:0,sortCondition,pageIndex:0,pageNumber:200,
+    firstFlag}`. Live to `:10380` it answers `{"error":"bad requestBody","status":
+    403}` to a plaintext body, and the official client's fm calls are NOT in the
+    plaintext `:10380` capture → the fm body is **AES-256-CBC encrypted** (client:
+    `aesKey=randomGenerate(16)`, `createCipheriv("aes-256-cbc",…)`; there is **no
+    `/exchange` endpoint** — that earlier match was the *Exchange* email logo).
+  - **Next milestone (harder):** recover the AES session key derivation and body
+    format. Most reliable route: relaunch Office Kit in the VM with
+    `SSLKEYLOGFILE` set, browse files, and decrypt its `:10381`/fm traffic to read
+    the exact encrypted-body scheme — rather than reversing the minified crypto.
+    (`/base-info` reported `isFmHasPermission:false` — a phone-side grant may also
+    be required.)
 - **`getPhone` response (VERIFIED):** `data` is a JSON *string* →
   ```json
   {"deviceType":"phone","bleId":"<6-digit>","openId":"<64-hex device openId>",

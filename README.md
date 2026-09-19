@@ -63,13 +63,15 @@ subprotocol `v1.hc.vivo.com.cn, <token>`) and streams events —
 listing, input, and notifications ride this clear channel; only the video/bulk
 media needs the `:10381` TLS.
 
-The file-manager API is mapped (`POST /pc_file_manager/channel` + `/download` +
-`/thumb`) but its body is **AES-256-CBC encrypted** (the endpoint returns
-`"bad requestBody"` to plaintext). **Next milestone:** implement the `/exchange`
-key handshake (§4 — PC-generated key/iv to the phone), which unlocks file listing/
-transfer and the rest of the control commands; then read the `:10381` TLS for
-screen mirror (§5). Full detail in
-[`protocol/PROTOCOL.md`](protocol/PROTOCOL.md).
+Port map (from the client config): `10380` control HTTP + ws, `10381` screen
+mirror (video, TLS), `5679`/`8904` the reverse channels (**VDFS** file transfer +
+relay). The file-manager API is mapped (`POST /pc_file_manager/channel` +
+`/download` + `/thumb`) but its body is **AES-256-CBC encrypted** (returns
+`"bad requestBody"` to plaintext; there is no key-exchange endpoint). **Next
+milestone:** recover the AES session-key scheme — most reliably by relaunching
+Office Kit in the VM with `SSLKEYLOGFILE` set and decrypting its file/mirror
+traffic — which unlocks file listing/transfer and screen mirror (§5). Full detail
+in [`protocol/PROTOCOL.md`](protocol/PROTOCOL.md).
 
 ## Quick start
 
