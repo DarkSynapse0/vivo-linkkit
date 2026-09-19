@@ -214,6 +214,17 @@ Multiple connect modes (from `app-connection.js` / `components-connection.js`):
     `UPDATE_DEVICE_INFO:{"mobileDeviceId":…}`, `RE_CONNECT_ALBUM:{"auth":1,…}`,
     `{"state":"normal"}`. This is the §3 framing, in the clear — only the
     **`:10381` TLS** carries the video/bulk media. (`connect_usb.py --watch`.)
+  - **File manager (:10380 HTTP):** `POST /pc_file_manager/channel` (list),
+    `/pc_file_manager/download`, `/pc_file_manager/thumb?fileUri=…&width=…`. Body
+    base = `{category,data,fileCount:0,sortCondition,pageIndex:0,pageNumber:200,
+    firstFlag}`. Live test: the endpoint answers but returns
+    `{"error":"bad requestBody","status":403}` to a *plaintext* body → the body
+    is **AES-256 encrypted** (§4). The client has `aes-256-cbc` +
+    `createCipheriv`/`createDecipheriv` and a **`/exchange`** endpoint (and
+    `/wifikey`) — the PC-generated key/iv is handed to the phone there. **Next
+    milestone:** implement the `/exchange` key handshake (§4), then the file/
+    control bodies decrypt/encrypt and features (list/transfer) open up. `/base-
+    info` also reported `isFmHasPermission:false` — may need a phone-side grant.
 - **`getPhone` response (VERIFIED):** `data` is a JSON *string* →
   ```json
   {"deviceType":"phone","bleId":"<6-digit>","openId":"<64-hex device openId>",

@@ -63,8 +63,12 @@ subprotocol `v1.hc.vivo.com.cn, <token>`) and streams events —
 listing, input, and notifications ride this clear channel; only the video/bulk
 media needs the `:10381` TLS.
 
-**Next:** map the control-plane event/command vocabulary (drive a file listing),
-then read the `:10381` TLS for screen mirror (§5). Full detail in
+The file-manager API is mapped (`POST /pc_file_manager/channel` + `/download` +
+`/thumb`) but its body is **AES-256-CBC encrypted** (the endpoint returns
+`"bad requestBody"` to plaintext). **Next milestone:** implement the `/exchange`
+key handshake (§4 — PC-generated key/iv to the phone), which unlocks file listing/
+transfer and the rest of the control commands; then read the `:10381` TLS for
+screen mirror (§5). Full detail in
 [`protocol/PROTOCOL.md`](protocol/PROTOCOL.md).
 
 ## Quick start
