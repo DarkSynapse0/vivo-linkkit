@@ -41,12 +41,15 @@ also *corrected* several decompile-era guesses. What's now evidence-verified:
   `{"code":"0000",…}`).
 - **Media:** **TLS 1.2** on `:10381` (self-signed `CN=vivo` cert); H.264/H.265
   video rides inside it.
+- **Trust model:** the connect **token is PC-minted** (`crypto.randomBytes(32)`,
+  one per connection, never seen cloud-side) — **KDE-Connect-style local trust**,
+  not a cloud credential. The phone trusts it because the account `openid` proves
+  *same-account*. ⇒ a **cloud-free USB connect is feasible**.
 
-**Next (Phase 3):** determine whether `newToken` is PC-minted (⇒ a fully
-cloud-free USB path, KDE-Connect-style local trust) or cloud-issued; decrypt the
-`:10381` TLS to read the wire framing/video; then a minimal Python client
-(adb-forward → `POST /version` → connect). Full detail, with the corrected
-findings, in [`protocol/PROTOCOL.md`](protocol/PROTOCOL.md).
+**Next (Phase 3):** prove the cloud-free USB path (mint token → `adb forward
+10380` → `POST /base-info {openid, token}` offline); decrypt the `:10381` TLS to
+read the wire framing/video; then a minimal Python client. Full detail, with the
+corrected findings, in [`protocol/PROTOCOL.md`](protocol/PROTOCOL.md).
 
 ## Quick start
 

@@ -184,8 +184,14 @@ Multiple connect modes (from `app-connection.js` / `components-connection.js`):
   4. **Media/data:** **TLS 1.2** on `:10381` (self-signed `CN=vivo` cert, valid
      to `99991231`) — the encrypted video (`ep4 IN`, no plaintext NALs) and data.
   The cloud `scan/sid`+`getPhone` still ran alongside, but the actual pipe is
-  **local adb**; whether the `newToken` is cloud-issued or PC-minted (⇒ a
-  cloud-free USB path, KDE-Connect-style) is the next thing to pin.
+  **local adb**. **`newToken` is PC-minted — VERIFIED (2026-09-19):** 12 distinct
+  per-connection tokens in one session, **none** present in any cloud req/resp;
+  the client has `crypto.randomBytes(32).toString("hex")` and always *sends* the
+  token to the phone (adb `--es token`, `newToken` header, `/base-info` body).
+  ⇒ **KDE-Connect-style local trust: a cloud-free USB connect is feasible** —
+  mint our own token, `adb forward 10380`, `POST /base-info` with the account
+  `openid` (proves same-account) + our token. Cloud is only needed for the
+  account login (openid) and, on the Wi-Fi path, rendezvous.
 - **`getPhone` response (VERIFIED):** `data` is a JSON *string* →
   ```json
   {"deviceType":"phone","bleId":"<6-digit>","openId":"<64-hex device openId>",
@@ -342,8 +348,10 @@ app secret/key found** (only public RSA keys, §4) — clean-room-safe.
    pipe** — the PC injects it into the phone via `adb … am startservice --es
    token '<newToken>'` and sends it as the `newToken:` header to the phone's
    `PcSuite-HTTP` server (§1, USB). The account gateway (`in-psuite`) uses
-   `openId`+`token`; the device gateway (phone `:10380`) uses `newToken`. Still
-   open: is `newToken` cloud-issued or PC-minted?
+   `openId`+`token`; the device gateway (phone `:10380`) uses `newToken`.
+   **`newToken` is PC-minted** (`crypto.randomBytes(32).toString("hex")`, one per
+   connection; never seen cloud-side) — see §1 USB. Local trust, not a cloud
+   credential ⇒ distributable, and a cloud-free USB path is feasible.
 5. **Gateway hosts (region-selected):** `pcsuite-api.vivo.com` (CN);
    `asia-/in-/eu-/ru-/de-gdpr-pcsuite-api.vivoglobal.com` (global). Device
    register/scan: `/scan/sid` → `/scan/getPhone` (§1). `connection-center.vivo.com.cn`
@@ -372,12 +380,15 @@ phone-connected capture.
   (§8). No exchange call, no `newToken`, no signature. No embedded secret.
 
 ## Open questions (remaining — need a live capture / build-and-observe)
-- Can a connect **fully avoid the vivo cloud** (`/scan/*`)? **Partially answered
-  (2026-09-19):** the **USB** connect does **NOT** avoid it — it runs the
-  `scan/sid`+`getPhone` cloud rendezvous, then rides the phone's LAN IP (§1).
-  **Still open:** does **Wi-Fi-Direct / local + BLE** (`startWifiDirect` /
-  `startLocalNetworkScan`) reach the phone without `/scan/*`? That's now the
-  decisive distributability question — capture a Wi-Fi-Direct connect next.
+- Can a connect **fully avoid the vivo cloud**? **Largely answered (2026-09-19):**
+  the connect **token is PC-minted local trust** (§1/§8), and over **USB** the
+  phone is reached via **adb directly** — so the cloud `scan/*` rendezvous looks
+  **skippable for USB** (we don't need it to find the phone or to get a token).
+  The official client still calls `scan/*` alongside, but nothing in the pipe
+  depends on it. **To confirm:** build the minimal adb path (`adb forward 10380`
+  → `POST /base-info` with our own token + the login `openid`) with the network
+  offline and see if the phone accepts. Cloud is still needed for the account
+  login (openid) and for the **Wi-Fi** path's rendezvous.
 - Capture the **actual device pipe** to the phone's LAN IP (wss, §2/§3) — it
   bypasses the HTTP proxy, so use a network capture (tshark on `virbr0`/`vnet0`),
   not mitmproxy. This is the P3 gateway (framing, `connectionId`/`openId` use).
