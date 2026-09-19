@@ -14,11 +14,11 @@ reimplementing it, scrcpy-style. No vendor binaries.
 > [scrcpy](https://github.com/Genymobile/scrcpy) and
 > [libimobiledevice](https://libimobiledevice.org/).
 
-## Status: a working, cloud-free file-transfer client
+## Status: a working, cloud-free file client + screen mirror
 
 From Linux, over a USB cable, `vivolinkkit` connects to the phone and **lists,
 downloads, and previews files** — clean-room, no vivo cloud call, no vendor
-secret, no on-screen confirmation:
+secret, no on-screen confirmation — and **mirrors the phone screen** to the PC:
 
 ```console
 $ vivolinkkit connect --list images,videos --grab images:2 --thumbs images:5
@@ -27,6 +27,9 @@ $ vivolinkkit connect --list images,videos --grab images:2 --thumbs images:5
 [files:videos]   64 files: video_20260911_164804.mp4 (169 MB), …
 [grab:images]   downloading 2 files → captures/downloads/   (byte-exact PNG/JPEG ✓)
 [thumbs:images] 5 × 144×144 preview PNGs → captures/downloads/thumbs/
+
+$ vivolinkkit mirror                    # live phone screen on Linux, consent-free
+[mirror] 10BG1E183Q000Z9 → live window (scrcpy, no MediaProjection consent)
 ```
 
 **The pivotal question — how is pairing authenticated? — is answered:** it's
@@ -38,14 +41,18 @@ cloud-free** client is possible.
 
 ### Scope, stated honestly
 
-`vivo-linkkit` is a **file extractor**, not a full Office Kit replacement. It
-talks *directly* to the phone's token-authenticated file API and pulls **genuine
-files** (byte-exact, openable, carrying the phone's own EXIF — verified on real
-hardware). But on the phone's Office Kit "connect" screen, only the heartbeat
-**link** shows ✓; screen mirror, file transfer, clipboard, and notifications show
-✗, because we don't establish those full feature *sessions*. So: the data you
-pull is real, and the phone marks the features as not-connected — both are true.
-The heavy features are the [native tier](#two-tiers--whats-done-whats-native).
+`vivo-linkkit` is a **file extractor + screen mirror**, not a full Office Kit
+replacement. It talks *directly* to the phone's token-authenticated file API and
+pulls **genuine files** (byte-exact, openable, carrying the phone's own EXIF —
+verified on real hardware). But on the phone's Office Kit "connect" screen, only
+the heartbeat **link** shows ✓; file transfer, clipboard, and notifications show ✗,
+because we don't establish those full feature *sessions*. So: the data you pull is
+real, and the phone marks those features as not-connected — both are true.
+**Mirror** works too, but deliberately *outside* Office Kit — via the consent-free
+`app_process` capture path (scrcpy's mechanism), because vivo's own Cast SDK
+mirror is OS-consent-gated for any non-platform-signed client (see
+[`PROTOCOL.md`](protocol/PROTOCOL.md) §6). The remaining heavy features are the
+[native tier](#two-tiers--whats-done-whats-native).
 
 ## How it works
 
@@ -91,7 +98,8 @@ reversing, not JS-grepping).
 | Account auth · cloud-free USB connect | JSON/HTTP | ✅ working |
 | Control websocket | JSON/WS | ✅ working (`--watch`) |
 | File **list · download · thumbnails** | JSON/HTTP | ✅ working |
-| **Screen mirror** (phone→PC) | Cast SDK ws `:10381/mirror/screen` (H.264) — **protocol fully mapped** | 🔒 OS consent-gated (see below) |
+| **Screen mirror** (phone→PC) | `app_process` capture (scrcpy path) — consent-free | ✅ working (`mirror`) |
+| ↳ *via vivo's own Cast SDK* | Cast ws `:10381/mirror/screen` — **protocol fully mapped** | 🔒 OS consent-gated (see below) |
 | File **upload** (PC→phone) | VDFS (`5679`/`8904`) | ⬜ native tier |
 | **Clipboard · notifications** | native `vivoSyncService` (MQTT + protobuf) | ⬜ native tier |
 
@@ -128,6 +136,21 @@ category and writes a full manifest (`size · path · name`) to
 preview. Downloads and thumbnails also land in `captures/downloads/` (gitignored).
 Run `vivolinkkit connect --help` for all options.
 
+**3 — mirror the phone screen to the PC** (live and interactive, over USB):
+
+```sh
+vivolinkkit mirror                     # live window; control the phone from Linux
+vivolinkkit mirror --view-only         # watch only, no control
+vivolinkkit mirror --record phone.mp4  # record instead of / as well as viewing
+```
+
+This is **consent-free**: it streams via the `app_process` display-capture path
+(the same mechanism as [scrcpy](https://github.com/Genymobile/scrcpy), which it
+drives) — *not* vivo's Cast SDK, whose screen-capture consent is gated by Android's
+MediaProjection model for any non-platform-signed client (fully reverse-engineered
+but unusable from a clean-room PC client — see [`PROTOCOL.md`](protocol/PROTOCOL.md)
+§6). Requires `scrcpy` (`sudo pacman -S scrcpy`).
+
 ### Instrumentation (for extending the protocol)
 
 The Windows 11 VM + capture tooling used to observe the official client:
@@ -145,9 +168,10 @@ See [`scripts/vm/README.md`](scripts/vm/README.md) for the mitmproxy + usbmon +
 ## Layout
 
 ```
-src/vivolinkkit/cli.py           the `vivolinkkit` command (login | connect)
+src/vivolinkkit/cli.py           the `vivolinkkit` command (login | connect | mirror)
 src/vivolinkkit/login.py         drive the user's vivo login → account token
 src/vivolinkkit/connect_usb.py   cloud-free USB connect + file list/download/thumbs
+src/vivolinkkit/mirror.py        phone→PC screen mirror (consent-free app_process path)
 protocol/PROTOCOL.md             the living spec (the heart of the project)
 scripts/vm/                      Win11 instrumentation VM + capture/decrypt tooling
 recon/                           device inventory, APK decompile, capture helpers
@@ -162,7 +186,7 @@ captures/                        gitignored — raw dumps, decompiled output, se
 | **P1** Protocol map | Answer the pairing question; fill `PROTOCOL.md` | ✅ done |
 | **P2** Auth & connect | Account login + cloud-free USB connect (`code 0000`) | ✅ done |
 | **P3** File client | List + download + thumbnails, working & clean-room | ✅ done |
-| **P4** Native tier | Upload (VDFS), clipboard/notifications, screen mirror (Frida) | ⬜ next |
+| **P4** Native tier | Screen mirror ✅ (`app_process` path); next: upload (VDFS), clipboard/notifications | 🟡 started |
 | **P5** Packaging | `vivolinkkit` CLI ✓; next: PKGBUILD → AUR, more devices | 🟡 started |
 
 See the full [roadmap PDF](vivo-linkkit-ROADMAP.pdf) for detail.

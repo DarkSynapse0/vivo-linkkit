@@ -3,9 +3,12 @@
     vivolinkkit login   [--region in]                 # one-time: your vivo account
     vivolinkkit connect [--list images,videos] [--grab images:3]
                         [--thumbs images:5] [--watch 10]
+    vivolinkkit mirror  [--record phone.mp4] [--view-only]
 
 `login` drives your own vivo passport login to obtain the account token.
 `connect` opens a cloud-free USB connection to the phone and runs file services.
+`mirror` streams the phone screen to the PC over USB (consent-free, via the
+scrcpy app_process path — not vivo's OS-gated Cast SDK; see PROTOCOL.md §6).
 Each subcommand forwards its remaining args to the underlying module, so
 `vivolinkkit connect --help` shows the full connect options.
 """
@@ -16,6 +19,7 @@ import sys
 _SUBCOMMANDS = {
     "login": ("vivolinkkit.login", "drive your own vivo account login (one-time)"),
     "connect": ("vivolinkkit.connect_usb", "USB connect + file list/download/thumbnails"),
+    "mirror": ("vivolinkkit.mirror", "phone→PC screen mirror over USB (consent-free)"),
 }
 
 
