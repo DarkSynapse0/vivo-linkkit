@@ -75,12 +75,15 @@ $ python -m vivolinkkit.connect_usb --list images,videos
 [files:videos] …  64 files: video_20260911_164804.mp4 (169 MB), …
 ```
 
-The fm API is `POST /pc_file_manager/channel` over TLS (`:10380` sniffs the first
-byte: `0x16`→TLS); the body's `type` field (`REQUEST_POSTS_IMAGELIST`, etc.) was
-the last missing piece. Decryption used `SSLKEYLOGFILE` + a usbmon capture +
+**File download works too** — `connect_usb.py --grab images:3,videos:1` pulls the
+real files to `captures/downloads/` (verified byte-exact PNG/JPEG/MP4) via
+`GET /download/down_files?path=…&srctype=…&newToken=…`. The listing API is
+`POST /pc_file_manager/channel` over TLS (`:10380` sniffs the first byte:
+`0x16`→TLS); the body's `type` field (`REQUEST_POSTS_IMAGELIST`, etc.) was the
+last missing piece. Decryption used `SSLKEYLOGFILE` + a usbmon capture +
 `scripts/vm/decrypt_usb_tls.py` (reorders the ADB-tunnelled TLS records so tshark
-decrypts both directions). **Next:** file transfer/download + screen mirror on
-`:10381` (§5). Full detail in [`protocol/PROTOCOL.md`](protocol/PROTOCOL.md).
+decrypts both directions). **Next:** screen mirror on `:10381` (§5). Full detail
+in [`protocol/PROTOCOL.md`](protocol/PROTOCOL.md).
 
 ## Quick start
 

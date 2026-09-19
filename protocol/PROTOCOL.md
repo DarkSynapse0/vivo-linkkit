@@ -251,11 +251,15 @@ Multiple connect modes (from `app-connection.js` / `components-connection.js`):
     Values: `REQUEST_POSTS_{HOMEDATA,IMAGELIST,VIDEOLIST,AUDIOLIST,DOCSLIST,
     WEB_DOCSLIST,FILELIST,NEW_APP,NEW_QQ,NEW_WECHAT,ONE_MOTH_LIST,
     RECENTE_DELETE_LIST}`. Response = `{"dataList":…}` with `fileName/fileSize/
-    savePath/mimeType/isDirectory/date/duration`. Other fm endpoints:
-    `/tab_count?type=N`, `/get_path`, `/download`, `/download_info`, `/thumb?
-    fileUri=…&width=…`, `/query_directory_size`, `/recycle_operation`,
-    `/trans_open_file`, `/drop_files_info`. Driven by
-    `connect_usb.py --list images,videos,docs,audio,home,webdocs,files`.
+    savePath/mimeType/isDirectory/date/duration`.
+  - **File DOWNLOAD also works (VERIFIED):** `GET {base}/download/down_files?
+    path=<savePath>&srctype=<mimeType>&newToken=<token>` on `:10380` (TLS) streams
+    the raw file. Confirmed exact byte-for-byte for PNG/JPEG/MP4 off the phone.
+    Other fm endpoints: `/tab_count?type=N`, `/get_path`, `/download` +
+    `/download_info`, `/thumb?fileUri=…&width=…`, `/query_directory_size`,
+    `/recycle_operation`, `/trans_open_file`, `/drop_files_info`. Driven by
+    `connect_usb.py --list images,videos,…` and `--grab images:3,videos:1`
+    (saves to `captures/downloads/`).
   - **Decrypt method note:** the synthetic pcap must **reorder TLS records into
     real handshake flow** (ClientHello → ServerHello.. → client CCS/Finished →
     client APP → server APP); otherwise tshark hits the client's encrypted records

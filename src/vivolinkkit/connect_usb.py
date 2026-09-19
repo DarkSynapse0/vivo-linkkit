@@ -68,6 +68,8 @@ WS_SUBPROTO = "v1.hc.vivo.com.cn"  # 1st WS subprotocol; the token is the 2nd
 # File manager: POST /pc_file_manager/channel over TLS on PORT_HTTP (the port
 # sniffs the first byte: 0x16 -> TLS). Body needs the `type` constant below.
 FM_CHANNEL = "/pc_file_manager/channel"
+FM_DOWNLOAD = "/download/down_files"   # GET ?path=&srctype=<mime>&newToken=
+DL_DIR = REPO_ROOT / "captures" / "downloads"   # gitignored
 FM_TYPES = {  # friendly name -> vivo REQUEST_POSTS_* constant (sortCondition/groupBy)
     "home": ("REQUEST_POSTS_HOMEDATA", 0, 0), "images": ("REQUEST_POSTS_IMAGELIST", 9, 1),
     "videos": ("REQUEST_POSTS_VIDEOLIST", 5, 1), "audio": ("REQUEST_POSTS_AUDIOLIST", 5, 0),
@@ -252,23 +254,61 @@ def tls_post(port: int, path: str, body: dict, token: str,
         return 0, f"{type(e).__name__}: {e}"
 
 
-def list_files(token: str, kind: str) -> None:
+import re as _re
+_FILE_RE = _re.compile(
+    r'"fileName":"([^"]+)","fileSize":(\d+),"isDirectory":false,'
+    r'"isLivePhoto":[^,]+,"savePath":"([^"]+)"')
+
+
+def fm_list(token: str, kind: str) -> tuple[int, list[tuple[str, int, str]]]:
+    """Return (http_status, [(fileName, fileSize, savePath), …]) for a category."""
     typ, sort, group = FM_TYPES[kind]
     body = {"category": "", "data": "", "fileCount": 0, "sortCondition": sort,
             "groupBy": group, "type": typ, "pageIndex": 0, "pageNumber": 200,
             "firstFlag": False}
     st, data = tls_post(PORT_HTTP, FM_CHANNEL, body, token)
-    print(f"\n[files:{kind}] POST {FM_CHANNEL} type={typ} → HTTP {st}")
-    if st != 200:
-        print(f"   {data[:200]}"); return
-    import re
-    names = re.findall(r'"fileName":"([^"]+)"', data)
-    sizes = re.findall(r'"fileSize":(\d+)', data)
-    print(f"   {len(names)} files ({len(data)} bytes):")
-    for n, s in list(zip(names, sizes))[:20]:
-        print(f"     {int(s):>12,}  {n}")
-    if len(names) > 20:
-        print(f"     … and {len(names) - 20} more")
+    files = [(m.group(1), int(m.group(2)), m.group(3)) for m in _FILE_RE.finditer(data)]
+    return st, files
+
+
+def list_files(token: str, kind: str) -> None:
+    st, files = fm_list(token, kind)
+    print(f"\n[files:{kind}] type={FM_TYPES[kind][0]} → HTTP {st}  ({len(files)} files)")
+    for n, s, _ in files[:20]:
+        print(f"     {s:>12,}  {n}")
+    if len(files) > 20:
+        print(f"     … and {len(files) - 20} more")
+
+
+def tls_get(port: int, path: str, timeout: float = 30.0) -> tuple[int, bytes]:
+    ctx = ssl._create_unverified_context()
+    try:
+        c = http.client.HTTPSConnection("127.0.0.1", port, timeout=timeout, context=ctx)
+        c.request("GET", path)
+        r = c.getresponse(); data = r.read(); c.close()
+        return r.status, data
+    except Exception as e:  # noqa: BLE001
+        return 0, str(e).encode()
+
+
+def grab_files(token: str, kind: str, count: int) -> None:
+    """List a category and download the first `count` files to captures/downloads/."""
+    st, files = fm_list(token, kind)
+    if st != 200 or not files:
+        print(f"\n[grab:{kind}] list failed (HTTP {st})"); return
+    DL_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"\n[grab:{kind}] downloading {min(count, len(files))} of {len(files)} files → {DL_DIR}")
+    import urllib.parse
+    for name, size, save_path in files[:count]:
+        q = urllib.parse.urlencode({"path": save_path, "srctype": "", "newToken": token})
+        gst, data = tls_get(PORT_HTTP, f"{FM_DOWNLOAD}?{q}")
+        if gst == 200 and data:
+            out = DL_DIR / name
+            out.write_bytes(data)
+            ok = "✓" if len(data) == size else f"(got {len(data)}, expected {size})"
+            print(f"   {len(data):>12,}  {name}  {ok}")
+        else:
+            print(f"   FAILED {name}  HTTP {gst}: {data[:80]!r}")
 
 
 # --- control-plane websocket --------------------------------------------------
@@ -310,7 +350,8 @@ def watch_events(token: str, seconds: float) -> None:
 
 # --- the connect sequence -----------------------------------------------------
 def connect(serial: str, hostname: str, dry_run: bool = False,
-            watch_seconds: float = 0.0, list_kinds: list[str] | None = None) -> None:
+            watch_seconds: float = 0.0, list_kinds: list[str] | None = None,
+            grab: list[tuple[str, int]] | None = None) -> None:
     openid, acct = load_account()
     token = secrets.token_hex(32)                 # <-- our OWN minted token
     conn_id = f"{secrets.token_hex(2)}_{now_ms()}"
@@ -400,6 +441,8 @@ def connect(serial: str, hostname: str, dry_run: bool = False,
         print(f"[connect] saved captures/auth/connect-proof.json")
         for kind in (list_kinds or []):
             list_files(token, kind)
+        for kind, n in (grab or []):
+            grab_files(token, kind, n)
         if watch_seconds:
             watch_events(token, watch_seconds)
     else:
@@ -423,14 +466,23 @@ def main() -> None:
                     help="after connecting, stream control-plane ws events for N s")
     ap.add_argument("--list", default="", metavar="KINDS",
                     help=f"comma-separated file lists to fetch: {','.join(FM_TYPES)}")
+    ap.add_argument("--grab", default="", metavar="KIND:N",
+                    help="download the first N files of a KIND to captures/downloads/ "
+                         "(e.g. images:2,videos:1)")
     args = ap.parse_args()
     kinds = [k.strip() for k in args.list.split(",") if k.strip()]
     bad = [k for k in kinds if k not in FM_TYPES]
     if bad:
         raise SystemExit(f"[connect] unknown --list kinds {bad}; choose from {list(FM_TYPES)}")
+    grab = []
+    for spec in (s.strip() for s in args.grab.split(",") if s.strip()):
+        kind, _, n = spec.partition(":")
+        if kind not in FM_TYPES:
+            raise SystemExit(f"[connect] unknown --grab kind {kind!r}; choose from {list(FM_TYPES)}")
+        grab.append((kind, int(n or "1")))
     serial = pick_device(args.serial) if not args.dry_run else (args.serial or "?")
     connect(serial, args.pc_name, dry_run=args.dry_run, watch_seconds=args.watch,
-            list_kinds=kinds)
+            list_kinds=kinds, grab=grab)
 
 
 if __name__ == "__main__":
