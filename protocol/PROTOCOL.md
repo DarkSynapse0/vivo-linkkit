@@ -537,6 +537,23 @@ wrapped (RSA/`createRequestSign`) on top of TLS.
     result token is a caller-supplied Binder, not a permission-backed resource, so an
     external shell/ADB client cannot influence it. Confirms vivo-native mirror needs
     the platform signature or root.
+  - **"Parent finishing" REFUTED by `wm_finish_activity` timing (2026-09-19).** A
+    clean single-trigger `-b events` capture times the whole lifecycle to the ms:
+    `11.220` create parent `MediaProjectionActivity` → `11.247` create child consent
+    → `11.282` **child** `wm_finish_activity … app-request` (self-cancel) → `11.314`
+    child destroyed → **`12.308` parent `wm_finish_activity … app-request`** →
+    `12.503` parent destroyed. The parent doesn't finish until a **full second after**
+    it launched (and destroyed) the child, so `sourceRecord.finishing` was **false**
+    at `startActivityForResult` time — the parent-finishing-race hypothesis is out.
+    Yet the child still self-cancels (`app-request` = `finishAsCancelled()` →
+    `getCallingPackage()==null`), so `resultTo` is null for a *different* reason: the
+    parent either never passes its token, or `ActivityRecord.isInAnyTask(resultTo)`
+    doesn't resolve it (note the child is created at `11.247` while the parent isn't
+    `wm_resume_activity`'d until `11.292` — i.e. `o()`/`startActivityForResult` runs
+    during the transparent parent's `onCreate`, before it is resumed). Net: confirmed
+    vivo-specific result-attribution quirk, not a stock-AOSP finishing race — and
+    still nothing an external shell/ADB client can set. Conclusion unchanged: needs
+    platform signature or root.
 - **Input:** cross-device keyboard/mouse — `keyboardMouseCoordinationServer`.
 - **File transfer:** Vdfs (`VdfsClient`/`VdfsWsMsg`,
   `CONNECT_ROUTER.vdfsApplicationClient`) + the HTTP file APIs in §2.
