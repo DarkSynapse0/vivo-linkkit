@@ -261,6 +261,13 @@ Multiple connect modes (from `app-connection.js` / `components-connection.js`):
     nothing in the JS; handled by `native/SyncService/vivoSyncService.exe` (MQTT
     `paho-mqtt` + protobuf + `VPushSdk`). Like the mirror (§6), a native
     sub-project — not the JSON/HTTP services here.
+  - **Local file UPLOAD (PC→phone) = VDFS, not a simple endpoint** (2026-09-19):
+    no `/pc_file_manager/upload`-style route (all 404); `/api/v1/file/*` is the
+    *cloud* `CloudServerApi` (fields `trace_id/sid/openid`). Local push uses
+    `VdfsClient`/`vdfsApplicationClient` over the reverse channels `5679`/`8904` —
+    another binary/native sub-project. **Net: the readable JSON/HTTP file services
+    are list + download + thumbnails (all working); upload/clipboard/notifications/
+    mirror are the native tier.**
     Other fm endpoints: `/tab_count?type=N`, `/get_path`, `/download` +
     `/download_info`, `/thumb?fileUri=…&width=…`, `/query_directory_size`,
     `/recycle_operation`, `/trans_open_file`, `/drop_files_info`. Driven by
