@@ -16,8 +16,8 @@ and only the SERVER direction decrypts — this ordering makes the client reques
 """
 import struct
 
-DEV = 10                                    # phone's usbmon device number (see the pcap)
-CAP = "captures/pipe/phone-usb-bus3-20260919-133011.pcap"
+DEV = 26                                    # phone's usbmon device number (see the pcap)
+CAP = "captures/pipe/phone-usb-bus3-20260920-151026.pcap"
 PCAP = "/tmp/tls_10380.pcap"
 
 

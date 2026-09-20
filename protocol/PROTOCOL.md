@@ -622,10 +622,27 @@ wrapped (RSA/`createRequestSign`) on top of TLS.
     Error"` and no file lands. Ruled out: missing dir (`…/投屏` exists), permission
     (`MANAGE_EXTERNAL_STORAGE granted=true`), body framing (tried Content-Length AND
     chunked), wrong type (tried 0 and the returned 7). The exception is inside the
-    non-decompilable `WebHttpUploadHandler.run()` (pipe→file writer). **Next: a live
-    capture of the official client's byte upload (Win VM + usbmon + TLS decrypt, as
-    used for download) to see the exact working request — phone logs are stripped so
-    black-box iteration can't see the server stack.**
+    non-decompilable `WebHttpUploadHandler.run()` (pipe→file writer).
+  - **Live capture attempted (2026-09-20) — decrypted the PREP, not the bytes.** Ran
+    the Win-VM usbmon + `SSLKEYLOGFILE` capture while the official client sent one
+    file. It decrypted the Electron/Chromium UI traffic and revealed the real
+    "send a file" flow is the **file-manager drag-drop path**, not the transport
+    path we implemented:
+    - `POST /pc_file_manager/get_path` `{"id":"1313","path_type":""}` → save dir
+    - `POST /pc_file_manager/file_check`
+      `{"id":"<cuid>","source_paths":[{"file_path":"/storage/emulated/0/Download/`
+      `Office Kit/<name>"}]}` → duplicate check
+    - then the bytes via `/upload/drop_file_to_phone` (`DropUploadController`).
+    Also: the real save dir under an English UI is **`…/Download/Office Kit/`** (not
+    `vivo办公套件`/`投屏`).
+  - **Blocker: the byte streams don't decrypt.** The bulk transfer rides TCP streams
+    whose TLS `CLIENT_RANDOM`s are **absent from `SSLKEYLOGFILE`** — Office Kit sends
+    the file bytes over **Node/native TLS, which doesn't honour `SSLKEYLOGFILE`**
+    (only the Chromium/Electron UI traffic logs keys). So the usbmon+keylog method
+    structurally can't reveal the byte request. To get it: hook the client (Frida in
+    the VM) to dump the request, or a TLS-MITM inserted at the client, or reimplement
+    the drag-drop path (`get_path`→`file_check`→`drop_files_info`→`drop_file_to_phone`)
+    from the decompiled `DropUploadController` and iterate against the live phone.
 - Clipboard sync: `TODO`
 - Notification mirroring: `com.vivo.cowork.notification` — `TODO`
 
