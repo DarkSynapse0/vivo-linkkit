@@ -98,7 +98,7 @@ reversing, not JS-grepping).
 | Account auth · cloud-free USB connect | JSON/HTTP | ✅ working |
 | Control websocket | JSON/WS | ✅ working (`--watch`) |
 | File **list · download · thumbnails** | JSON/HTTP | ✅ working |
-| **Screen mirror** (phone→PC) | `app_process` capture (scrcpy path) — consent-free | ✅ working (`mirror`, **interim**) |
+| **Screen mirror + control** (phone→PC) | `app_process` capture (scrcpy path) — consent-free; control · audio · clipboard · file-drop | ✅ working (`mirror`, **interim**) |
 | ↳ *via vivo's own Cast SDK* (the goal) | Cast ws `:10381/mirror/screen` — **protocol fully mapped** | 🔒 OS consent-gated; needs privileged grant (see below) |
 | File **upload** (PC→phone) | VDFS (`5679`/`8904`) | ⬜ native tier |
 | **Clipboard · notifications** | native `vivoSyncService` (MQTT + protobuf) | ⬜ native tier |
@@ -136,13 +136,20 @@ category and writes a full manifest (`size · path · name`) to
 preview. Downloads and thumbnails also land in `captures/downloads/` (gitignored).
 Run `vivolinkkit connect --help` for all options.
 
-**3 — mirror the phone screen to the PC** (live and interactive, over USB):
+**3 — mirror *and control* the phone from the PC** (live, over USB — or wireless ADB):
 
 ```sh
-vivolinkkit mirror                     # live window; control the phone from Linux
-vivolinkkit mirror --view-only         # watch only, no control
-vivolinkkit mirror --record phone.mp4  # record instead of / as well as viewing
+vivolinkkit mirror                     # live window: control + audio + clipboard sync
+vivolinkkit mirror --view-only         # watch only, no keyboard/mouse control
+vivolinkkit mirror --stay-awake --screen-off   # keep phone awake, its own screen off
+vivolinkkit mirror --record phone.mp4  # record (also viewable unless --headless)
+vivolinkkit mirror --no-audio --bit-rate 4M --max-fps 30   # tune the stream
 ```
+
+By default you get keyboard/mouse **control**, **audio** forwarding (Android 11+),
+and two-way **clipboard sync**; drag a file onto the window to push it to the phone,
+or drop an `.apk` to install it. `--push-target DIR` sets where dropped files land.
+Run `vivolinkkit mirror --help` for the full flag set.
 
 This is an **interim engine**, consent-free: it streams via the `app_process`
 display-capture path (the same mechanism as
