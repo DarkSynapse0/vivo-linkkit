@@ -583,7 +583,33 @@ wrapped (RSA/`createRequestSign`) on top of TLS.
 
 ## 7. Services (later — P4)
 
-- File transfer: `com.vivo.vdfs` + `com.vivo.cowork.file` — `TODO`
+- **File UPLOAD (PC→phone) — reversed 2026-09-20; it's plain HTTP on `:10380`, NOT
+  native VDFS.** The official "send files" feature is a two-step flow on the same
+  token-authenticated server we already speak (routes in `HttpServerConnectInitializer`;
+  senders in the Electron JS `child-window.js` `uploadFilesInfo`):
+  1. **Announce:** `POST /transport/upload_files_info` (`TransUploadInfoController`)
+     with a `DropUploadFilesInfo` JSON — registers a task in `DropUploadInfoManager`
+     keyed by `id`. Fields (`@SerializedName`): `id`, `dropFileItems[]` (each
+     `DropFileItem`: `finalFileName`, `mimeType`, `ifDuplicated`, `fileReturn`),
+     `savePath`, `totalCount`, `totalSize`, `type`, `screen_w/screen_h`, `x`/`y`
+     (drop-point, for the drag animation), `fileTypes`.
+  2. **Bytes, one request per file:** `POST /upload/upload_files?id=<id>&type=<type>&index=<N>`
+     (`TransUploadController extends Controller<Object>`, `super(false)` = raw-body /
+     no JSON parse) with the **raw file bytes as the body**, streamed via
+     `ChunkHandler`. Query params carry `id` (the task), `type`, and 0-based `index`.
+     On `onEnd` for `index == totalCount-1` the phone finalizes the batch
+     (`PcMirroringUtil.startDrop`), removes the task, and `responseSuccess`; earlier
+     indices just `responseSuccess` per file. Files land in
+     `Environment.DIRECTORY_DOWNLOADS/"vivo办公套件"` (or the task `savePath`).
+  - Drag-drop variant: `POST /pc_file_manager/drop_files_info` → `POST
+    /upload/drop_file_to_phone` (`DropUploadController`) — same idea, drop-anim path.
+    APK install: `POST /upload/install-apk` (`ControlInstallApkController`).
+  - Transport: HTTPS (client `buildUrl` → `https://<host><path>?<query>`), i.e. the
+    same TLS-on-`:10380` (first-byte `0x16`) + `newToken` header as file download.
+  - Still to pin by test/live-capture: exactly which `DropFileItem`/info fields are
+    *required* (vs optional), the `type` enum values, and whether `savePath` must be
+    set or defaults to the office-kit dir. Implement `vivolinkkit send <file>` and
+    iterate against the live phone (the request shape above is complete enough to try).
 - Clipboard sync: `TODO`
 - Notification mirroring: `com.vivo.cowork.notification` — `TODO`
 

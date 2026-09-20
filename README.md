@@ -100,7 +100,7 @@ reversing, not JS-grepping).
 | File **list · download · thumbnails** | JSON/HTTP | ✅ working |
 | **Screen mirror + control** (phone→PC) | `app_process` capture (scrcpy path) — consent-free; control · audio · clipboard · file-drop | ✅ working (`mirror`, **interim**) |
 | ↳ *via vivo's own Cast SDK* (the goal) | Cast ws `:10381/mirror/screen` — **protocol fully mapped** | 🔒 OS consent-gated; needs privileged grant (see below) |
-| File **upload** (PC→phone) | VDFS (`5679`/`8904`) | ⬜ native tier |
+| File **upload** (PC→phone) | HTTP `/transport/upload_files_info` + `/upload/upload_files` (TLS `:10380`) — **not** native VDFS | 🟡 implemented (`connect --send`), live-test pending |
 | **Clipboard · notifications** | native `vivoSyncService` (MQTT + protobuf) | ⬜ native tier |
 
 ## Quick start
@@ -127,6 +127,7 @@ vivolinkkit connect \
     --list images,videos,docs \   # browse the phone
     --grab images:3,videos:1 \    # download → captures/downloads/
     --thumbs images:5 \           # 144×144 preview PNGs
+    --send ~/report.pdf \         # upload PC→phone (experimental — see below)
     --watch 10                    # stream live control-plane events
 ```
 
@@ -134,7 +135,9 @@ File kinds: `images videos audio docs files home`. `--list` returns the whole
 category and writes a full manifest (`size · path · name`) to
 `captures/downloads/<kind>.list.txt`; add `--limit N` to trim the on-screen
 preview. Downloads and thumbnails also land in `captures/downloads/` (gitignored).
-Run `vivolinkkit connect --help` for all options.
+`--send FILE` (repeatable) **uploads** a file to the phone's `Downloads/vivo办公套件`
+over the reversed two-step HTTP flow (`PROTOCOL.md` §7); it's implemented but not yet
+live-verified end-to-end. Run `vivolinkkit connect --help` for all options.
 
 **3 — mirror *and control* the phone from the PC** (live, over USB — or wireless ADB):
 

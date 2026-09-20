@@ -257,6 +257,56 @@ def tls_post(port: int, path: str, body: dict, token: str,
         return 0, f"{type(e).__name__}: {e}"
 
 
+# --- file UPLOAD (PC→phone), PROTOCOL.md §7 -----------------------------------
+# Two-step HTTP on the same TLS-:10380 server: announce a batch, then POST bytes.
+FM_UPLOAD_INFO = "/transport/upload_files_info"   # POST DropUploadFilesInfo JSON
+FM_UPLOAD = "/upload/upload_files"                # POST raw bytes ?id=&type=&index=
+
+
+def tls_post_raw(port: int, path: str, data: bytes, token: str,
+                 timeout: float = 120.0) -> tuple[int, str]:
+    """POST raw bytes over TLS (the streamed file body for /upload/upload_files)."""
+    ctx = ssl._create_unverified_context()
+    try:
+        c = http.client.HTTPSConnection("127.0.0.1", port, timeout=timeout, context=ctx)
+        c.request("POST", path, body=data,
+                  headers={"Content-Type": "application/octet-stream",
+                           "Content-Length": str(len(data)), "newToken": token})
+        r = c.getresponse()
+        resp = r.read().decode("utf-8", "replace")
+        c.close()
+        return r.status, resp
+    except Exception as e:  # noqa: BLE001
+        return 0, f"{type(e).__name__}: {e}"
+
+
+def upload_file(token: str, local: Path, save_path: str = "", ftype: str = "0") -> bool:
+    """Send one file PC→phone. Announce the batch, then stream the bytes."""
+    import mimetypes
+    local = Path(local)
+    if not local.is_file():
+        print(f"[send] not a file: {local}")
+        return False
+    data = local.read_bytes()
+    fid = secrets.token_hex(8)
+    mime = mimetypes.guess_type(local.name)[0] or "application/octet-stream"
+    info = {
+        "id": fid,
+        "dropFileItems": [{"finalFileName": local.name, "mimeType": mime}],
+        "savePath": save_path,          # "" → phone default (Downloads/vivo办公套件)
+        "totalCount": 1,
+        "totalSize": len(data),
+        "type": ftype,
+        "screen_w": 1260, "screen_h": 2800, "x": 600, "y": 1400,
+    }
+    st, resp = tls_post(PORT_HTTP, FM_UPLOAD_INFO, info, token)
+    print(f"[send] {local.name} ({len(data):,} B) info → HTTP {st}: {resp[:200]}")
+    q = urllib.parse.urlencode({"id": fid, "type": ftype, "index": "0"})
+    st2, resp2 = tls_post_raw(PORT_HTTP, f"{FM_UPLOAD}?{q}", data, token)
+    print(f"[send] {local.name} bytes → HTTP {st2}: {resp2[:200]}")
+    return st2 == 200
+
+
 import re as _re
 _FILE_RE = _re.compile(
     r'"fileName":"([^"]+)","fileSize":(\d+),"isDirectory":false,'
@@ -385,7 +435,7 @@ def connect(serial: str, hostname: str, dry_run: bool = False,
             watch_seconds: float = 0.0, list_kinds: list[str] | None = None,
             grab: list[tuple[str, int]] | None = None,
             thumbs: list[tuple[str, int]] | None = None,
-            list_limit: int = 0) -> None:
+            list_limit: int = 0, send: list[str] | None = None) -> None:
     openid, acct = load_account()
     token = secrets.token_hex(32)                 # <-- our OWN minted token
     conn_id = f"{secrets.token_hex(2)}_{now_ms()}"
@@ -479,6 +529,8 @@ def connect(serial: str, hostname: str, dry_run: bool = False,
             grab_files(token, kind, n)
         for kind, n in (thumbs or []):
             grab_thumbs(token, kind, n)
+        for f in (send or []):
+            upload_file(token, Path(f))
         if watch_seconds:
             watch_events(token, watch_seconds)
     else:
@@ -513,6 +565,9 @@ def main() -> None:
                          "(e.g. images:2,videos:1)")
     ap.add_argument("--thumbs", default="", metavar="KIND:N",
                     help="fetch thumbnails for the first N files of a KIND")
+    ap.add_argument("--send", action="append", default=[], metavar="FILE",
+                    help="upload FILE from the PC to the phone (repeatable); lands in "
+                         "the phone's Downloads/vivo办公套件")
     args = ap.parse_args()
     kinds = [k.strip() for k in args.list.split(",") if k.strip()]
     bad = [k for k in kinds if k not in FM_TYPES]
@@ -532,7 +587,8 @@ def main() -> None:
     thumbs = _pairs(args.thumbs, "thumbs")
     serial = pick_device(args.serial) if not args.dry_run else (args.serial or "?")
     connect(serial, args.pc_name, dry_run=args.dry_run, watch_seconds=args.watch,
-            list_kinds=kinds, grab=grab, thumbs=thumbs, list_limit=args.limit)
+            list_kinds=kinds, grab=grab, thumbs=thumbs, list_limit=args.limit,
+            send=args.send)
 
 
 if __name__ == "__main__":
