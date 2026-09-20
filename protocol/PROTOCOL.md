@@ -606,10 +606,26 @@ wrapped (RSA/`createRequestSign`) on top of TLS.
     APK install: `POST /upload/install-apk` (`ControlInstallApkController`).
   - Transport: HTTPS (client `buildUrl` → `https://<host><path>?<query>`), i.e. the
     same TLS-on-`:10380` (first-byte `0x16`) + `newToken` header as file download.
-  - Still to pin by test/live-capture: exactly which `DropFileItem`/info fields are
-    *required* (vs optional), the `type` enum values, and whether `savePath` must be
-    set or defaults to the office-kit dir. Implement `vivolinkkit send <file>` and
-    iterate against the live phone (the request shape above is complete enough to try).
+  - **Live progress (2026-09-20, `connect --send`):** step 1 is **VERIFIED working** —
+    `POST /transport/upload_files_info` returns `200 [{"fileCount":1,
+    "firstFileName":"<name>","saveDir":"/storage/emulated/0/Download/投屏",
+    "transformType":7}]`. Each `dropFileItems[]` entry must include the inherited
+    `BaseFileData` fields **`fileName`** (original — the match key), **`fileSize`**,
+    `isDirectory`, plus `finalFileName` + `mimeType` (the phone matches the byte
+    stream to a file by `fileName` via `getFinalFileNameByFileName`). The phone
+    assigns the real `transformType` (7) + `saveDir` in the reply; echo that type on
+    the byte POST.
+  - **Byte step still 500s server-side.** `POST /upload/upload_files?id=&type=&index=`
+    reaches `TransUploadController` → `WebHttpUploadHandler` (a
+    `SimpleChannelInboundHandler<HttpContent>` that streams the raw body to a
+    `Pipe`→file, then `renameTo`), but returns `500 "Failure: 500 Internal Server
+    Error"` and no file lands. Ruled out: missing dir (`…/投屏` exists), permission
+    (`MANAGE_EXTERNAL_STORAGE granted=true`), body framing (tried Content-Length AND
+    chunked), wrong type (tried 0 and the returned 7). The exception is inside the
+    non-decompilable `WebHttpUploadHandler.run()` (pipe→file writer). **Next: a live
+    capture of the official client's byte upload (Win VM + usbmon + TLS decrypt, as
+    used for download) to see the exact working request — phone logs are stripped so
+    black-box iteration can't see the server stack.**
 - Clipboard sync: `TODO`
 - Notification mirroring: `com.vivo.cowork.notification` — `TODO`
 

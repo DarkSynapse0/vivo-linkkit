@@ -264,14 +264,25 @@ FM_UPLOAD = "/upload/upload_files"                # POST raw bytes ?id=&type=&in
 
 
 def tls_post_raw(port: int, path: str, data: bytes, token: str,
-                 timeout: float = 120.0) -> tuple[int, str]:
-    """POST raw bytes over TLS (the streamed file body for /upload/upload_files)."""
+                 timeout: float = 120.0, chunked: bool = True) -> tuple[int, str]:
+    """POST raw bytes over TLS (the streamed file body for /upload/upload_files).
+
+    Default chunked so Netty delivers the body to WebHttpUploadHandler as HttpContent
+    frames (it's a SimpleChannelInboundHandler<HttpContent>, streamed to a pipe)."""
     ctx = ssl._create_unverified_context()
     try:
         c = http.client.HTTPSConnection("127.0.0.1", port, timeout=timeout, context=ctx)
-        c.request("POST", path, body=data,
-                  headers={"Content-Type": "application/octet-stream",
-                           "Content-Length": str(len(data)), "newToken": token})
+        if chunked:
+            c.putrequest("POST", path, skip_host=False, skip_accept_encoding=True)
+            c.putheader("Content-Type", "application/octet-stream")
+            c.putheader("Transfer-Encoding", "chunked")
+            c.putheader("newToken", token)
+            c.endheaders()
+            c.send(b"%X\r\n" % len(data) + data + b"\r\n0\r\n\r\n")
+        else:
+            c.request("POST", path, body=data,
+                      headers={"Content-Type": "application/octet-stream",
+                               "Content-Length": str(len(data)), "newToken": token})
         r = c.getresponse()
         resp = r.read().decode("utf-8", "replace")
         c.close()
@@ -290,9 +301,17 @@ def upload_file(token: str, local: Path, save_path: str = "", ftype: str = "0") 
     data = local.read_bytes()
     fid = secrets.token_hex(8)
     mime = mimetypes.guess_type(local.name)[0] or "application/octet-stream"
+    # Each item extends BaseFileData: the phone matches the byte stream to a file by
+    # `fileName` (original) then writes it as `finalFileName` — both are required.
     info = {
         "id": fid,
-        "dropFileItems": [{"finalFileName": local.name, "mimeType": mime}],
+        "dropFileItems": [{
+            "fileName": local.name,
+            "fileSize": len(data),
+            "finalFileName": local.name,
+            "mimeType": mime,
+            "isDirectory": False,
+        }],
         "savePath": save_path,          # "" → phone default (Downloads/vivo办公套件)
         "totalCount": 1,
         "totalSize": len(data),
@@ -301,7 +320,16 @@ def upload_file(token: str, local: Path, save_path: str = "", ftype: str = "0") 
     }
     st, resp = tls_post(PORT_HTTP, FM_UPLOAD_INFO, info, token)
     print(f"[send] {local.name} ({len(data):,} B) info → HTTP {st}: {resp[:200]}")
-    q = urllib.parse.urlencode({"id": fid, "type": ftype, "index": "0"})
+    # the phone assigns the real transformType (+ saveDir) in its info reply; echo
+    # that type back on the byte POST (a wrong type → 500 on the server side).
+    upl_type = ftype
+    try:
+        arr = json.loads(resp)
+        if isinstance(arr, list) and arr and arr[0].get("transformType") is not None:
+            upl_type = str(arr[0]["transformType"])
+    except Exception:  # noqa: BLE001
+        pass
+    q = urllib.parse.urlencode({"id": fid, "type": upl_type, "index": "0"})
     st2, resp2 = tls_post_raw(PORT_HTTP, f"{FM_UPLOAD}?{q}", data, token)
     print(f"[send] {local.name} bytes → HTTP {st2}: {resp2[:200]}")
     return st2 == 200
@@ -457,8 +485,13 @@ def connect(serial: str, hostname: str, dry_run: bool = False,
     for p in REVERSE_PORTS:
         adb(serial, "reverse", f"tcp:{p}", f"tcp:{p}")
 
-    # 3) start the AdbPortalService with our token (the `am start` activity the
-    #    official client also fires is NOT required — startservice alone works).
+    # 3) wake pcsuite first — if it isn't already running, `am startservice` is
+    #    refused ("app is in background uid null"). Launching its intent brings the
+    #    app up so the service start is allowed; harmless if it's already alive.
+    adb(serial, "shell", "am", "start", "--ei", "intent_from", "1104",
+        "-a", PCSUITE_INTENT, "-f", "268435456")
+    time.sleep(1.5)
+    # …then start the AdbPortalService with our token.
     adb(serial, "shell", "am", "startservice",
         "--es", "from", "pc",
         "--ei", "foreground", "0",
