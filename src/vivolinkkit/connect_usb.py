@@ -329,7 +329,10 @@ def upload_file(token: str, local: Path, save_path: str = "", ftype: str = "0") 
             upl_type = str(arr[0]["transformType"])
     except Exception:  # noqa: BLE001
         pass
-    q = urllib.parse.urlencode({"id": fid, "type": upl_type, "index": "0"})
+    # the body is chunked (no Content-Length), so the server needs the size in the
+    # query: the official client appends &contentLength=<fileSize> (offline-transfer-file.ts).
+    q = urllib.parse.urlencode({"id": fid, "type": upl_type, "index": "0",
+                                "contentLength": len(data)})
     st2, resp2 = tls_post_raw(PORT_HTTP, f"{FM_UPLOAD}?{q}", data, token)
     print(f"[send] {local.name} bytes → HTTP {st2}: {resp2[:200]}")
     return st2 == 200
