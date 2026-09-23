@@ -658,6 +658,22 @@ wrapped (RSA/`createRequestSign`) on top of TLS.
     per-file key is carried **inside the byte body's framing**, parsed by the
     non-decompilable `run()`. That framing is the single remaining unknown → **Frida
     (dump one real `drop_file_to_phone` request) is the clean finish.**
+  - **Frida attempted (2026-09-23) — infra works, blocked on stripped BoringSSL.**
+    Set up remote Frida (host `frida-tools` 17.18.0 ↔ `frida-server.exe` in the VM;
+    `scripts/vm/frida_upload_hook.js` + `frida_drive.py`) and attached to every
+    `pcsuite.exe` + `vivorelay.exe`. Findings while the official client sent a file:
+    - `SSL_write`/`SSL_read` are **not exported** in any process, and
+      `enumerateSymbols` + `getGlobalExportByName('SSL_write')` → **nothing**: the
+      Electron build statically links **BoringSSL, fully stripped**.
+    - `vivorelay.exe` is native Poco + **Schannel** (`SspiCli.dll`), so we hooked
+      `EncryptMessage` — but it **never fired** for the transfer (nor any diag), i.e.
+      the file bytes do **not** go through vivorelay's Schannel.
+    - Conclusion: the byte upload rides **pcsuite.exe's Node → stripped BoringSSL**,
+      hookable only by fragile version-specific **pattern-scanning** of `SSL_write`.
+    Remaining options to get the framing: (a) BoringSSL pattern-scan hook; (b) a
+    **reverse TLS-MITM** on the client's localhost→phone hop (the mitmproxy CA is
+    already trusted on the phone, and the client uses `rejectUnauthorized:false`).
+    The Frida tooling is committed and reusable for (a).
 - Clipboard sync: `TODO`
 - Notification mirroring: `com.vivo.cowork.notification` — `TODO`
 

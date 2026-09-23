@@ -100,7 +100,7 @@ reversing, not JS-grepping).
 | File **list · download · thumbnails** | JSON/HTTP | ✅ working |
 | **Screen mirror + control** (phone→PC) | `app_process` capture (scrcpy path) — consent-free; control · audio · clipboard · file-drop | ✅ working (`mirror`, **interim**) |
 | ↳ *via vivo's own Cast SDK* (the goal) | Cast ws `:10381/mirror/screen` — **protocol fully mapped** | 🔒 OS consent-gated; needs privileged grant (see below) |
-| File **upload** (PC→phone) | HTTP on `:10380` — drag-drop path (`drop_files_info`→`drop_file_to_phone`), **not** native VDFS | 🟡 `connect --send` registers the task; byte step `RemoteDisconnected` — the per-file key rides an undecompilable body framing (Frida to finish) |
+| File **upload** (PC→phone) | HTTP on `:10380` — drag-drop path (`drop_files_info`→`drop_file_to_phone`), **not** native VDFS | 🟡 `connect --send` registers the task; byte-body framing unknown — client sends bytes via Node's stripped BoringSSL (Frida can't hook by name; needs pattern-scan or TLS-MITM) |
 | **Clipboard · notifications** | native `vivoSyncService` (MQTT + protobuf) | ⬜ native tier |
 
 ## Quick start
