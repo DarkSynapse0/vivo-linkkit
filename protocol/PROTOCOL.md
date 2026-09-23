@@ -643,6 +643,21 @@ wrapped (RSA/`createRequestSign`) on top of TLS.
     the VM) to dump the request, or a TLS-MITM inserted at the client, or reimplement
     the drag-drop path (`get_path`→`file_check`→`drop_files_info`→`drop_file_to_phone`)
     from the decompiled `DropUploadController` and iterate against the live phone.
+  - **Drag-drop path implemented + narrowed to ONE unknown (2026-09-20).**
+    `connect --send` now uses the drag-drop path (`type:"TO_PC_FILE_MANAGER"`,
+    explicit `savePath:"/storage/emulated/0/Download/Office Kit"`, item
+    `ifDuplicated:"overwrite"`). Result against the live phone:
+    `POST /pc_file_manager/drop_files_info` → **200** (task registers cleanly — the
+    transport path never did), then `POST /upload/drop_file_to_phone?id=&type=` →
+    **`RemoteDisconnected`** (server closes, no file). Root cause pinned: the byte
+    handler `FileManagerHttpUploadHandler` → `b.p(id)` (`CacheAbsPath`)
+    `getUnSanitizedPath()` resolves the file via `dropFileItemMap.get(<fileRoot of
+    getOriginalPath()>)` — the map is keyed by **`fileName`**, but `getOriginalPath()`
+    (`AbsPath.path`, set via `setPath`) is **never populated by any decompiled code**
+    and is **not** a query param (tried `?path=`, still `RemoteDisconnected`). So the
+    per-file key is carried **inside the byte body's framing**, parsed by the
+    non-decompilable `run()`. That framing is the single remaining unknown → **Frida
+    (dump one real `drop_file_to_phone` request) is the clean finish.**
 - Clipboard sync: `TODO`
 - Notification mirroring: `com.vivo.cowork.notification` — `TODO`
 

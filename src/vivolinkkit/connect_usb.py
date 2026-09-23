@@ -259,8 +259,12 @@ def tls_post(port: int, path: str, body: dict, token: str,
 
 # --- file UPLOAD (PC→phone), PROTOCOL.md §7 -----------------------------------
 # Two-step HTTP on the same TLS-:10380 server: announce a batch, then POST bytes.
-FM_UPLOAD_INFO = "/transport/upload_files_info"   # POST DropUploadFilesInfo JSON
-FM_UPLOAD = "/upload/upload_files"                # POST raw bytes ?id=&type=&index=
+FM_UPLOAD_INFO = "/transport/upload_files_info"   # transport path: announce
+FM_UPLOAD = "/upload/upload_files"                # transport path: bytes ?id=&type=&index=
+# drag-drop path — what the official "send a file" actually uses (capture, PROTOCOL §7):
+FM_DROP_INFO = "/pc_file_manager/drop_files_info"  # register the drop task
+FM_DROP = "/upload/drop_file_to_phone"             # bytes ?id=&type=
+OFFICE_KIT_DIR = "/storage/emulated/0/Download/Office Kit"  # real save dir (English UI)
 
 
 def tls_post_raw(port: int, path: str, data: bytes, token: str,
@@ -291,8 +295,14 @@ def tls_post_raw(port: int, path: str, data: bytes, token: str,
         return 0, f"{type(e).__name__}: {e}"
 
 
-def upload_file(token: str, local: Path, save_path: str = "", ftype: str = "0") -> bool:
-    """Send one file PC→phone. Announce the batch, then stream the bytes."""
+def upload_file(token: str, local: Path, save_path: str = OFFICE_KIT_DIR) -> bool:
+    """Send one file PC→phone via the drag-drop path (PROTOCOL.md §7).
+
+    Register the drop task (`drop_files_info`), then stream the bytes
+    (`drop_file_to_phone`). The item extends BaseFileData: the phone matches the
+    stream to a file by `fileName` and writes it as `finalFileName`; type
+    `TO_PC_FILE_MANAGER` + an explicit `savePath` make it land in a normal folder
+    (not the cast dir). `ifDuplicated:"overwrite"` avoids a dup prompt."""
     import mimetypes
     local = Path(local)
     if not local.is_file():
@@ -301,8 +311,6 @@ def upload_file(token: str, local: Path, save_path: str = "", ftype: str = "0") 
     data = local.read_bytes()
     fid = secrets.token_hex(8)
     mime = mimetypes.guess_type(local.name)[0] or "application/octet-stream"
-    # Each item extends BaseFileData: the phone matches the byte stream to a file by
-    # `fileName` (original) then writes it as `finalFileName` — both are required.
     info = {
         "id": fid,
         "dropFileItems": [{
@@ -311,29 +319,30 @@ def upload_file(token: str, local: Path, save_path: str = "", ftype: str = "0") 
             "finalFileName": local.name,
             "mimeType": mime,
             "isDirectory": False,
+            "ifDuplicated": "overwrite",
         }],
-        "savePath": save_path,          # "" → phone default (Downloads/vivo办公套件)
+        "savePath": save_path,
         "totalCount": 1,
         "totalSize": len(data),
-        "type": ftype,
+        "type": "TO_PC_FILE_MANAGER",
         "screen_w": 1260, "screen_h": 2800, "x": 600, "y": 1400,
     }
-    st, resp = tls_post(PORT_HTTP, FM_UPLOAD_INFO, info, token)
-    print(f"[send] {local.name} ({len(data):,} B) info → HTTP {st}: {resp[:200]}")
-    # the phone assigns the real transformType (+ saveDir) in its info reply; echo
-    # that type back on the byte POST (a wrong type → 500 on the server side).
-    upl_type = ftype
+    st, resp = tls_post(PORT_HTTP, FM_DROP_INFO, info, token)
+    print(f"[send] {local.name} ({len(data):,} B) drop_files_info → HTTP {st}: {resp[:200]}")
+    upl_type = "0"
     try:
         arr = json.loads(resp)
         if isinstance(arr, list) and arr and arr[0].get("transformType") is not None:
             upl_type = str(arr[0]["transformType"])
     except Exception:  # noqa: BLE001
         pass
-    # the body is chunked (no Content-Length), so the server needs the size in the
-    # query: the official client appends &contentLength=<fileSize> (offline-transfer-file.ts).
-    q = urllib.parse.urlencode({"id": fid, "type": upl_type, "index": "0",
-                                "contentLength": len(data)})
-    st2, resp2 = tls_post_raw(PORT_HTTP, f"{FM_UPLOAD}?{q}", data, token)
+    # bytes are chunked; include contentLength like the official client.
+    # OPEN: the byte handler resolves the file via `originalPath` (== the item's
+    # fileName, the dropFileItemMap key), which is NOT a query param (DropUploadController
+    # reads only id/type) — it's set inside the non-decompilable run(), i.e. the body is
+    # framed per-file. That framing is the last unknown → needs Frida/byte-stream capture.
+    q = urllib.parse.urlencode({"id": fid, "type": upl_type, "contentLength": len(data)})
+    st2, resp2 = tls_post_raw(PORT_HTTP, f"{FM_DROP}?{q}", data, token)
     print(f"[send] {local.name} bytes → HTTP {st2}: {resp2[:200]}")
     return st2 == 200
 
